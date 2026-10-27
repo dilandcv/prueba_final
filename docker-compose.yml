@@ -1,0 +1,212 @@
+version: "3.8"
+
+# ==============================================================================
+# PLATAFORMA DE ANÁLISIS SÍSMICO - DOCKER COMPOSE INICIAL
+# Servicios agrupados por perfiles:
+# - Perfil "core" (por defecto): postgres, airflow, api, frontend
+# - Perfil "ai": ollama (descarga y servicio de modelo local)
+# - Perfil "metadata": openmetadata (catálogo de datos y linaje)
+# ==============================================================================
+
+networks:
+  seismic_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  ollama_data:
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL 16 (Almacén de datos Medallón: bronze, silver, gold, ops, metrics)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: seismic_postgres
+    restart: unless-stopped
+    profiles: ["core", "ai", "metadata"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-seismic_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_example_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres_admin} -d ${POSTGRES_DB:-seismic_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # Airflow Init (Migración de esquema y creación de usuario administrador)
+  # ----------------------------------------------------------------------------
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: seismic_airflow_init
+    profiles: ["core", "ai", "metadata"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://postgres_admin:postgres_example_password@postgres:5432/seismic_platform}
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin || true
+      "
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # Airflow Webserver (UI de orquestación)
+  # ----------------------------------------------------------------------------
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: seismic_airflow_webserver
+    restart: unless-stopped
+    profiles: ["core", "ai", "metadata"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://postgres_admin:postgres_example_password@postgres:5432/seismic_platform}
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION:-false}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-false}
+    volumes:
+      - ./dags:/opt/airflow/dags:ro
+      - ./src:/opt/airflow/src:ro
+      - ./prompts:/opt/airflow/prompts:ro
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # Airflow Scheduler (Ejecución de DAGs y tareas PySpark locales)
+  # ----------------------------------------------------------------------------
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: seismic_airflow_scheduler
+    restart: unless-stopped
+    profiles: ["core", "ai", "metadata"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://postgres_admin:postgres_example_password@postgres:5432/seismic_platform}
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION:-false}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-false}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-seismic_platform}
+      POSTGRES_PIPELINE_PASSWORD: ${POSTGRES_PIPELINE_PASSWORD:-pipeline_example_password}
+      SPARK_MASTER: local[*]
+      SPARK_DRIVER_MEMORY: 1g
+      SPARK_SHUFFLE_PARTITIONS: 4
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - ./dags:/opt/airflow/dags:ro
+      - ./src:/opt/airflow/src:ro
+      - ./prompts:/opt/airflow/prompts:ro
+    command: scheduler
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # Backend API (FastAPI)
+  # ----------------------------------------------------------------------------
+  api:
+    image: python:3.11-slim
+    container_name: seismic_api
+    restart: unless-stopped
+    profiles: ["core", "ai", "metadata"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-seismic_platform}
+      POSTGRES_API_READER_PASSWORD: ${POSTGRES_API_READER_PASSWORD:-api_reader_example_password}
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    command: >
+      bash -c "pip install --no-cache-dir fastapi uvicorn[standard] psycopg[binary] sse-starlette pydantic python-dotenv &&
+               uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/api/v1/health\")' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # Frontend Web (React + Vite + Tailwind + Leaflet)
+  # ----------------------------------------------------------------------------
+  frontend:
+    image: node:20-alpine
+    container_name: seismic_frontend
+    restart: unless-stopped
+    profiles: ["core", "ai", "metadata"]
+    working_dir: /app/frontend
+    volumes:
+      - ./frontend:/app/frontend
+    ports:
+      - "3000:3000"
+    command: sh -c "if [ -f package.json ]; then npm install && npm run dev -- --host 0.0.0.0 --port 3000; else echo 'Frontend no inicializado'; tail -f /dev/null; fi"
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # Ollama (Servicio de Inteligencia Artificial Local)
+  # ----------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: seismic_ollama
+    restart: unless-stopped
+    profiles: ["ai"]
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - seismic_net

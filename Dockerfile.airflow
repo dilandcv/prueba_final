@@ -1,0 +1,33 @@
+# ==============================================================================
+# Dockerfile para Apache Airflow con Apache Spark local y JDBC PostgreSQL
+# ==============================================================================
+FROM apache/airflow:2.10.0-python3.11
+
+USER root
+
+# Instalación de Java 17 JRE headless y utilidades necesarias para Spark
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openjdk-17-jre-headless \
+        curl \
+        procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configuración de variables de entorno Java y Spark
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Descarga del driver JDBC oficial de PostgreSQL para PySpark
+RUN mkdir -p /opt/airflow/jars \
+    && curl -fSL https://jdbc.postgresql.org/download/postgresql-42.7.3.jar -o /opt/airflow/jars/postgresql-42.7.3.jar \
+    && chmod 644 /opt/airflow/jars/postgresql-42.7.3.jar
+
+ENV SPARK_CLASSPATH=/opt/airflow/jars/postgresql-42.7.3.jar
+
+# Cambio al usuario no privilegiado de Airflow
+USER airflow
+
+# Instalación de dependencias Python para procesamiento y utilidades
+COPY requirements.txt /opt/airflow/requirements.txt
+RUN pip install --no-cache-dir -r /opt/airflow/requirements.txt

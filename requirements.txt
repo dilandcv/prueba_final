@@ -1,0 +1,29 @@
+# ==============================================================================
+# DEPENDENCIAS DEL PROYECTO (Python 3.11 / Contenedor Airflow & Local)
+# REGLA ARQUITECTÓNICA: Prohibido el uso de pandas, polars o dask.
+# Todo procesamiento de datos se realiza con Apache Spark (PySpark).
+# ==============================================================================
+
+# Ingesta y Base de Datos
+requests==2.32.3
+psycopg[binary]==3.2.1
+python-dotenv==1.0.1
+
+# Procesamiento de Datos (PySpark oficial)
+pyspark==3.5.1
+
+# Validación de Datos y Modelos
+pydantic==2.8.2
+
+# API REST y Comunicación en Tiempo Real (FastAPI)
+fastapi==0.111.1
+uvicorn[standard]==0.30.3
+sse-starlette==2.1.2
+
+# Pruebas y Aseguramiento de Calidad
+pytest==8.2.2
+pytest-mock==3.14.0
+
+# Seguridad y Auditoría de Código
+bandit==1.7.9
+pip-audit==2.7.3
