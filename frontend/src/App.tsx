@@ -74,7 +74,7 @@ export const App: React.FC = () => {
       setRegionalRanking(rank);
       setMapEvents(evts);
 
-      setLastUpdate(ind.last_update || new Date().toISOString());
+      setLastUpdate(ind.last_update);
       setErrorMessage(null);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido al consultar la API';

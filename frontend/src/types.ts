@@ -5,7 +5,7 @@ export interface GeneralIndicators {
   max_magnitude: number | null;
   avg_magnitude: number | null;
   tsunami_alerts_count: number;
-  quality_score: number;
+  quality_score: number | null;
   last_update: string | null;
 }
 
@@ -41,7 +41,7 @@ export interface MapEvent {
 }
 
 export interface QualitySummary {
-  quality_score: number;
+  quality_score: number | null;
   total_records: number;
   valid_records: number;
   invalid_records: number;

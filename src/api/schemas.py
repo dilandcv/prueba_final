@@ -26,7 +26,7 @@ class GeneralIndicatorsResponse(BaseModel):
     max_magnitude: Optional[float] = Field(None, description="Magnitud máxima registrada")
     avg_magnitude: Optional[float] = Field(None, description="Magnitud promedio registrada")
     tsunami_alerts_count: int = Field(..., description="Total de eventos con alerta de tsunami")
-    quality_score: float = Field(..., description="Puntaje de calidad del último lote (0.0 a 100.0)")
+    quality_score: Optional[float] = Field(None, description="Puntaje de calidad del último lote (0.0 a 100.0) o None si no hay evaluaciones")
     last_update: Optional[datetime] = Field(None, description="Marca temporal del último procesamiento exitoso")
 
 
@@ -73,7 +73,7 @@ class MapEventItem(BaseModel):
 # ==============================================================================
 class QualitySummaryResponse(BaseModel):
     """Métricas de calidad de datos del último lote evaluado."""
-    quality_score: float = Field(..., description="Puntaje de calidad global (0.0 a 100.0)")
+    quality_score: Optional[float] = Field(None, description="Puntaje de calidad global (0.0 a 100.0) o None si no hay evaluaciones")
     total_records: int = Field(..., description="Total de registros evaluados")
     valid_records: int = Field(..., description="Total de registros que cumplieron todas las reglas")
     invalid_records: int = Field(..., description="Total de registros descartados")

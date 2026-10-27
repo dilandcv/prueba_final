@@ -58,9 +58,13 @@ export const Indicators: React.FC<IndicatorsProps> = ({ indicators, isLoading })
     },
     {
       title: 'Puntaje de Calidad',
-      value: indicators ? `${indicators.quality_score.toFixed(1)}%` : '-',
-      subtext: 'Validado por PySpark',
-      color: indicators && indicators.quality_score >= 90 ? 'text-emerald-600' : 'text-amber-600',
+      value: indicators
+        ? (indicators.quality_score !== null ? `${indicators.quality_score.toFixed(1)}%` : 'Sin evaluar')
+        : '-',
+      subtext: indicators && indicators.quality_score !== null ? 'Validado por PySpark' : 'Pendiente de validación',
+      color: indicators && indicators.quality_score !== null
+        ? (indicators.quality_score >= 90 ? 'text-emerald-600' : 'text-amber-600')
+        : 'text-slate-500',
       badge: 'Reglas',
       icon: (
         <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

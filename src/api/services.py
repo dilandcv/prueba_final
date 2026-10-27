@@ -110,7 +110,7 @@ class AnalyticsService:
                     """
                 )
                 q_row = cur.fetchone()
-                quality_score = float(q_row[0]) if q_row else 100.0
+                quality_score = float(q_row[0]) if q_row and q_row[0] is not None else None
 
                 # 3. Fecha de última disponibilidad
                 cur.execute(
@@ -373,7 +373,7 @@ class AnalyticsService:
 
         if not row:
             return QualitySummaryResponse(
-                quality_score=100.0,
+                quality_score=None,
                 total_records=0,
                 valid_records=0,
                 invalid_records=0,
@@ -501,7 +501,12 @@ class AnalyticsService:
             avail_batch = last_batch_id
             available_at = None
             records_proc = 0
-            overall_status = "HEALTHY"
+            if last_run_status == "SUCCESS":
+                overall_status = "HEALTHY"
+            elif last_run_status == "FAILED":
+                overall_status = "DEGRADED"
+            else:
+                overall_status = "UNINITIALIZED"
 
         return PipelineStatusResponse(
             status=overall_status,
