@@ -183,12 +183,17 @@ services:
     container_name: seismic_frontend
     restart: unless-stopped
     profiles: ["core", "ai", "metadata"]
+    depends_on:
+      api:
+        condition: service_healthy
     working_dir: /app/frontend
     volumes:
       - ./frontend:/app/frontend
+    environment:
+      - VITE_API_URL=http://api:8000
     ports:
       - "3000:3000"
-    command: sh -c "if [ -f package.json ]; then npm install && npm run dev -- --host 0.0.0.0 --port 3000; else echo 'Frontend no inicializado'; tail -f /dev/null; fi"
+    command: sh -c "if [ -f package.json ]; then npm run dev -- --host 0.0.0.0 --port 3000; else echo 'Frontend no inicializado'; tail -f /dev/null; fi"
     networks:
       - seismic_net
 
