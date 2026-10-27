@@ -37,6 +37,18 @@ def _resolve_db_host_port() -> tuple[str, int]:
     return configured_host, configured_port
 
 
+def _resolve_ollama_base_url() -> str:
+    """Resuelve la URL de Ollama según se ejecute en contenedor Docker o host local."""
+    configured_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+    if "ollama" in configured_url:
+        try:
+            socket.gethostbyname("ollama")
+            return configured_url
+        except (socket.gaierror, OSError):
+            return "http://localhost:11434"
+    return configured_url
+
+
 @dataclass(frozen=True)
 class DatabaseSettings:
     host: str = field(default_factory=lambda: _resolve_db_host_port()[0])
@@ -80,9 +92,9 @@ class APISettings:
 
 @dataclass(frozen=True)
 class AISettings:
-    ollama_base_url: str = field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"))
+    ollama_base_url: str = field(default_factory=_resolve_ollama_base_url)
     model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.2:1b"))
-    timeout_seconds: int = field(default_factory=lambda: int(os.getenv("AI_TIMEOUT_SECONDS", "15")))
+    timeout_seconds: int = field(default_factory=lambda: int(os.getenv("AI_TIMEOUT_SECONDS", "45")))
     cost_per_token: float = field(default_factory=lambda: float(os.getenv("AI_COST_PER_TOKEN", "0.0")))
     anomaly_threshold: float = field(default_factory=lambda: float(os.getenv("ANOMALY_ZSCORE_THRESHOLD", "3.0")))
     anomaly_min_observations: int = field(default_factory=lambda: int(os.getenv("ANOMALY_MIN_OBSERVATIONS", "24")))

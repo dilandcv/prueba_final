@@ -191,30 +191,40 @@ def test_daily_report_fallback_generation():
 
 def test_run_daily_executive_report_execution():
     """Verifica la ejecución unificada del reporte diario y persistencia en ops.ai_executions."""
-    res = run_daily_executive_report()
-    assert res["status"] == "SUCCESS"
-    assert res["used_fallback"] is True  # Sin Ollama activo en pruebas unitarias
-    assert res["execution_id"] > 0
-    assert len(res["report_text"]) > 100
-    assert "Resumen Ejecutivo" in res["report_text"]
+    with patch.object(
+        OllamaClient,
+        "generate",
+        return_value=AIGenerationResult(
+            text="# Resumen Ejecutivo Diario de Actividad Sísmica\nReporte generado con fallback determinista.",
+            model_name="deterministic_fallback",
+            status="FALLBACK",
+            used_fallback=True,
+        ),
+    ):
+        res = run_daily_executive_report()
+        assert res["status"] == "SUCCESS"
+        assert res["used_fallback"] is True
+        assert res["execution_id"] > 0
+        assert len(res["report_text"]) > 20
+        assert "Resumen Ejecutivo" in res["report_text"]
 
-    # Verificar registro en base de datos
-    with get_db_connection(role="pipeline") as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT automation_type, model_name, status, used_fallback
-                FROM ops.ai_executions
-                WHERE id = %s;
-                """,
-                (res["execution_id"],),
-            )
-            row = cur.fetchone()
-            assert row is not None
-            assert row[0] == "DAILY_REPORT"
-            assert row[1] == "deterministic_fallback"
-            assert row[2] == "FALLBACK"
-            assert row[3] is True
+        # Verificar registro en base de datos
+        with get_db_connection(role="pipeline") as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT automation_type, model_name, status, used_fallback
+                    FROM ops.ai_executions
+                    WHERE id = %s;
+                    """,
+                    (res["execution_id"],),
+                )
+                row = cur.fetchone()
+                assert row is not None
+                assert row[0] == "DAILY_REPORT"
+                assert row[1] == "deterministic_fallback"
+                assert row[2] == "FALLBACK"
+                assert row[3] is True
 
 
 # ==============================================================================
