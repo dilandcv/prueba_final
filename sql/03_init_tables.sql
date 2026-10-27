@@ -181,6 +181,25 @@ CREATE TABLE IF NOT EXISTS ops.data_availability (
 COMMENT ON TABLE ops.data_availability IS 'Registro de lotes completados para notificación al backend y frontend vía SSE.';
 CREATE INDEX IF NOT EXISTS idx_ops_available_at ON ops.data_availability (available_at);
 
+-- Registro consolidado de ejecuciones de pipelines (Airflow)
+CREATE TABLE IF NOT EXISTS ops.pipeline_executions (
+    id BIGSERIAL PRIMARY KEY,
+    dag_id VARCHAR(100) NOT NULL,
+    run_id VARCHAR(100) NOT NULL,
+    batch_id UUID NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    duration_seconds NUMERIC(8,2) NOT NULL DEFAULT 0.0,
+    records_ingested INT NOT NULL DEFAULT 0,
+    quality_score NUMERIC(5,2),
+    status VARCHAR(20) NOT NULL DEFAULT 'SUCCESS',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+COMMENT ON TABLE ops.pipeline_executions IS 'Registro consolidado de ejecuciones de pipelines para observabilidad y auditoría.';
+CREATE INDEX IF NOT EXISTS idx_ops_pipeline_batch_id ON ops.pipeline_executions (batch_id);
+CREATE INDEX IF NOT EXISTS idx_ops_pipeline_run_id ON ops.pipeline_executions (run_id);
+
 -- Seguimiento de ejecuciones del módulo de IA
 CREATE TABLE IF NOT EXISTS ops.ai_executions (
     id BIGSERIAL PRIMARY KEY,

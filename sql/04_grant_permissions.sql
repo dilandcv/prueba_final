@@ -41,6 +41,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA gold TO api_reader;
 GRANT SELECT ON metrics.data_quality TO api_reader;
 GRANT SELECT ON ops.anomaly_alerts TO api_reader;
 GRANT SELECT ON ops.data_availability TO api_reader;
+GRANT SELECT ON ops.pipeline_executions TO api_reader;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold
 GRANT SELECT ON TABLES TO api_reader;

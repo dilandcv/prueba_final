@@ -46,6 +46,7 @@ services:
   # Airflow Init (Migración de esquema y creación de usuario administrador)
   # ----------------------------------------------------------------------------
   airflow-init:
+    image: seismic-airflow:latest
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -55,20 +56,12 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      PYTHONPATH: /opt/airflow
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://postgres_admin:postgres_example_password@postgres:5432/seismic_platform}
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
     command: >
-      bash -c "
-        airflow db migrate &&
-        airflow users create \
-          --username admin \
-          --firstname Admin \
-          --lastname User \
-          --role Admin \
-          --email admin@example.com \
-          --password admin || true
-      "
+      bash -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true"
     networks:
       - seismic_net
 
@@ -76,6 +69,7 @@ services:
   # Airflow Webserver (UI de orquestación)
   # ----------------------------------------------------------------------------
   airflow-webserver:
+    image: seismic-airflow:latest
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -88,6 +82,7 @@ services:
       airflow-init:
         condition: service_completed_successfully
     environment:
+      PYTHONPATH: /opt/airflow
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://postgres_admin:postgres_example_password@postgres:5432/seismic_platform}
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION:-false}
       AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-false}
@@ -97,6 +92,7 @@ services:
       - ./prompts:/opt/airflow/prompts:ro
     ports:
       - "8080:8080"
+    command: webserver
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 30s
@@ -109,6 +105,7 @@ services:
   # Airflow Scheduler (Ejecución de DAGs y tareas PySpark locales)
   # ----------------------------------------------------------------------------
   airflow-scheduler:
+    image: seismic-airflow:latest
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -121,16 +118,20 @@ services:
       airflow-init:
         condition: service_completed_successfully
     environment:
+      PYTHONPATH: /opt/airflow
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-postgresql+psycopg2://postgres_admin:postgres_example_password@postgres:5432/seismic_platform}
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION:-false}
       AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-false}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-seismic_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_example_password}
       POSTGRES_PIPELINE_PASSWORD: ${POSTGRES_PIPELINE_PASSWORD:-pipeline_example_password}
       SPARK_MASTER: local[*]
       SPARK_DRIVER_MEMORY: 1g
       SPARK_SHUFFLE_PARTITIONS: 4
+      SPARK_JDBC_JAR: /opt/airflow/jars/postgresql-42.7.3.jar
       OLLAMA_BASE_URL: http://ollama:11434
     volumes:
       - ./dags:/opt/airflow/dags:ro
