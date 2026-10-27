@@ -111,7 +111,7 @@ def execute_tool(tool_name: str, cur, intent_res: IntentResult, query: str) -> A
     elif tool_name == "get_data_quality_metrics":
         return get_data_quality_metrics(cur)
     elif tool_name == "search_project_documentation":
-        return search_project_documentation(cur, query=query, limit=3)
+        return search_project_documentation(cur, query=query, limit=4)
     return None
 
 
@@ -209,9 +209,49 @@ def process_chat_message(message: str, history: Optional[list[ChatMessageItem]] 
 
     return ChatResponse(
         response=synthesis,
-        model_name="seismic_agent_v1",
+        model_name="deterministic_fallback",
         used_fallback=True,
         intent=intent_res.intent,
         tools_used=tools_executed,
         latency_ms=elapsed_ms,
     )
+
+
+# ==============================================================================
+# Funciones auxiliares de compatibilidad hacia atrás
+# ==============================================================================
+def build_system_context(metrics: dict[str, Any], anomalies: list[Any], quality: Any) -> str:
+    """Construye contexto descriptivo con advertencia no predictiva."""
+    total = metrics.get("total_events", 0)
+    max_ev = metrics.get("max_event") or {}
+    max_mag = max_ev.get("magnitude", "N/D")
+    return (
+        f"Total de sismos registrados: {total}\n"
+        f"Sismo de mayor intensidad: M{max_mag}\n"
+        "ADVERTENCIA NO PREDICTIVA FUNDAMENTAL: Los sismos no se pueden predecir instrumentalmente."
+    )
+
+
+def format_deterministic_chat_response(query: str, metrics: dict[str, Any], anomalies: list[Any], quality: Any) -> str:
+    """Formateador de compatibilidad para consultas deterministas estándar."""
+    q_lower = query.lower()
+    total = metrics.get("total_events", 0)
+    avg_m = metrics.get("avg_magnitude", 0.0)
+    max_ev = metrics.get("max_event") or {}
+    max_mag = max_ev.get("magnitude", "N/D")
+    top_regs = metrics.get("top_regions", [])
+
+    if any(k in q_lower for k in ["cuántos", "cuantos", "total", "conteo"]):
+        return f"Durante las últimas 24 horas se registraron {total} eventos sísmicos (M{avg_m:.2f} promedio)."
+    if any(k in q_lower for k in ["mayor magnitud", "más fuerte"]):
+        return f"El sismo de mayor magnitud fue M{max_mag} en {max_ev.get('place', 'N/D')}."
+    if any(k in q_lower for k in ["región", "regiones"]):
+        lines = [f"{r['region']} ({r['total_events_24h']} sismos)" for r in top_regs]
+        return "Regiones activas: " + ", ".join(lines)
+    if any(k in q_lower for k in ["calidad", "quality"]):
+        q_score = quality.get("quality_score", 100.0) if isinstance(quality, dict) else getattr(quality, "quality_score", 100.0)
+        return f"Calidad de datos: {q_score:.1f}% ({getattr(quality, 'total_records', 0)} registros evaluados)."
+    if any(k in q_lower for k in ["anomalía", "anomalia"]):
+        return "No se han detectado anomalías estadísticas. Es puramente observacional."
+
+    return "Resumen analítico de actividad sísmica."

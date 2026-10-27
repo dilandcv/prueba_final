@@ -82,20 +82,33 @@ def search_project_documentation(cur, query: str, limit: int = 4) -> list[dict[s
     if not clean_query:
         return []
 
-    # 1. Búsqueda por FTS con ranking
+    # Filtrado de palabras vacías y construcción de consulta OR para máxima cobertura
+    stopwords = {
+        "de", "la", "el", "los", "las", "un", "una", "unos", "unas", "y", "o", "en", "a", "por",
+        "para", "con", "que", "qué", "cual", "cuáles", "cuales", "como", "cómo", "es", "son",
+        "se", "su", "sus", "al", "del", "este", "esta", "estos", "estas", "tiene", "durante",
+        "entre", "sobre", "antes", "después", "desde", "hasta", "cada", "todo", "toda"
+    }
+    raw_tokens = [re.sub(r"[^\w]", "", t.lower()) for t in clean_query.split()]
+    meaningful_tokens = [t for t in raw_tokens if len(t) >= 3 and t not in stopwords]
+
+    # Construir consulta OR con websearch_to_tsquery
+    search_expr = " OR ".join(meaningful_tokens) if meaningful_tokens else clean_query
+
+    # 1. Búsqueda por FTS con ranking y operadores OR
     fts_sql = """
         SELECT
             doc_name,
             section_title,
             file_path,
             content,
-            ts_rank(tsv, plainto_tsquery('spanish', %s)) AS rank
+            ts_rank(tsv, websearch_to_tsquery('spanish', %s)) AS rank
         FROM ops.project_documents
-        WHERE tsv @@ plainto_tsquery('spanish', %s)
+        WHERE tsv @@ websearch_to_tsquery('spanish', %s)
         ORDER BY rank DESC
         LIMIT %s;
     """
-    cur.execute(fts_sql, (clean_query, clean_query, limit))
+    cur.execute(fts_sql, (search_expr, search_expr, limit))
     rows = cur.fetchall()
 
     results = []

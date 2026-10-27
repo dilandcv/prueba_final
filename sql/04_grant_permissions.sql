@@ -54,7 +54,7 @@ GRANT SELECT ON TABLES TO api_reader;
 -- 3. Permisos para ROL ai_reader (Componente invocador de IA)
 -- Solo lectura sobre tablas analíticas agregadas de Gold, calidad y alertas de Ops.
 -- ------------------------------------------------------------------------------
-REVOKE ALL ON SCHEMA bronze, silver FROM ai_reader;
+REVOKE ALL ON SCHEMA bronze, silver, metrics FROM ai_reader;
 
 GRANT USAGE ON SCHEMA gold, metrics, ops TO ai_reader;
 
