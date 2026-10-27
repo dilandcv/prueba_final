@@ -1,9 +1,12 @@
 """Endpoints operativos: calidad, anomalías, reportes de IA y estado del pipeline."""
 from fastapi import APIRouter, Query
 
+from src.ai.chat_service import process_chat_message
 from src.api.schemas import (
     AIReportItem,
     AnomalyAlertItem,
+    ChatRequest,
+    ChatResponse,
     PipelineStatusResponse,
     QualitySummaryResponse,
 )
@@ -33,6 +36,13 @@ def get_ai_reports(
 ) -> list[AIReportItem]:
     """Retorna los reportes narrativos y auditorías de IA local generadas."""
     return AnalyticsService.get_ai_reports(limit=limit)
+
+
+@router.post("/ai/chat", response_model=ChatResponse)
+def chat_with_ai_agent(payload: ChatRequest) -> ChatResponse:
+    """Interacción conversacional con el agente de IA local sobre los datos sísmicos verificados."""
+    return process_chat_message(message=payload.message, history=payload.history)
+
 
 
 @router.get("/pipeline/status", response_model=PipelineStatusResponse)

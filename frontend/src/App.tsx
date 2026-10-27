@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Chatbot } from './components/Chatbot';
 import { Filters } from './components/Filters';
 import { Indicators } from './components/Indicators';
+
 import { MagnitudeChart } from './components/MagnitudeChart';
 import { Navbar } from './components/Navbar';
 import { RegionalRanking } from './components/RegionalRanking';
@@ -47,6 +49,8 @@ export const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+
 
   // Ref para acceder a los filtros activos dentro del callback SSE sin stale closure
   const filtersRef = useRef<FilterState>(filters);
@@ -154,7 +158,10 @@ export const App: React.FC = () => {
         lastUpdate={lastUpdate}
         onRefresh={() => loadAllData(filters)}
         isLoading={isLoading}
+        onToggleChat={() => setIsChatOpen((prev) => !prev)}
+        isChatOpen={isChatOpen}
       />
+
 
       {/* Banner de Estado / Notificaciones / Errores transitorios */}
       <StatusBanner status={connectionStatus} errorMessage={errorMessage} />
@@ -202,8 +209,30 @@ export const App: React.FC = () => {
           <span className="font-mono text-slate-600">USGS Earthquake API &bull; PostgreSQL &bull; FastAPI</span>
         </div>
       </footer>
+
+      {/* Botón flotante para acceso rápido al Asistente IA */}
+      <button
+        onClick={() => setIsChatOpen(true)}
+        className="fixed bottom-6 right-6 z-40 p-3.5 bg-gradient-to-tr from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-full shadow-lg shadow-sky-600/30 transition transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-400"
+        title="Abrir Asistente de IA"
+        aria-label="Abrir Asistente de IA"
+      >
+        <span className="relative flex items-center justify-center">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+          </svg>
+          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-300 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-sky-400"></span>
+          </span>
+        </span>
+      </button>
+
+      {/* Asistente Conversacional IA (Panel Lateral Desplegable) */}
+      <Chatbot isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
     </div>
   );
 };
+
 
 export default App;

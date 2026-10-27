@@ -117,3 +117,27 @@ class HealthResponse(BaseModel):
     status: str = Field("UP", description="Estado del servidor")
     database: str = Field(..., description="Estado de la conexión a PostgreSQL")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Hora de chequeo")
+
+
+# ==============================================================================
+# Chatbot y Asistente Conversacional
+# ==============================================================================
+class ChatMessageItem(BaseModel):
+    """Mensaje individual en el historial de conversación."""
+    role: str = Field(..., description="Rol del remitente ('user' o 'assistant')")
+    content: str = Field(..., min_length=1, description="Contenido textual del mensaje")
+
+
+class ChatRequest(BaseModel):
+    """Petición conversacional enviada al asistente de IA."""
+    message: str = Field(..., min_length=1, max_length=2000, description="Pregunta del usuario")
+    history: list[ChatMessageItem] = Field(default_factory=list, description="Historial previo de mensajes")
+
+
+class ChatResponse(BaseModel):
+    """Respuesta generada por el agente de IA para el chatbot."""
+    response: str = Field(..., description="Respuesta en lenguaje natural fundamentada en datos")
+    model_name: str = Field(..., description="Nombre del modelo de inferencia o fallback")
+    used_fallback: bool = Field(False, description="Indica si se recurrió al motor determinista")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Fecha y hora UTC de la respuesta")
+

@@ -57,3 +57,20 @@ export interface FilterState {
 }
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  model_name?: string;
+  used_fallback?: boolean;
+}
+
+export interface ChatResponse {
+  response: string;
+  model_name: string;
+  used_fallback: boolean;
+  timestamp: string;
+}
+
