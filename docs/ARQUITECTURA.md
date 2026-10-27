@@ -111,3 +111,25 @@ El classpath se verifica programáticamente consultando al ClassLoader de la JVM
 spark._jvm.java.lang.Class.forName("org.postgresql.Driver")
 ```
 Si la clase no está en el classpath, la llamada lanza `ClassNotFoundException`. El script [`src/processing/verify_spark_jdbc.py`](file:///home/cohorte-5/Escritorio/prueba_final/src/processing/verify_spark_jdbc.py) ejecuta esta comprobación de forma automatizada.
+
+---
+
+## 4. Seguridad, Segregación de Roles y Aislamiento
+
+### Principio de Mínimos Privilegios en Base de Datos
+La base de datos implementa tres roles técnicos con permisos estrictamente acotados:
+
+1. **`pipeline`** (Orquestador Airflow y tareas Spark):
+   - Privilegios completos (`ALL PRIVILEGES`) sobre los esquemas `bronze`, `silver`, `gold`, `metrics` y `ops`.
+   - Es el único rol autorizado a escribir en Bronze, transformar a Silver/Gold y registrar métricas operativas.
+2. **`api_reader`** (Backend FastAPI):
+   - Permiso exclusivo de solo lectura (`SELECT`) sobre las tablas analíticas de `gold`, las métricas de calidad (`metrics.data_quality`), las alertas operativas (`ops.anomaly_alerts`) y el control de disponibilidad (`ops.data_availability`).
+   - Tiene revocado explícitamente el acceso a las capas `bronze` y `silver`, a las tablas de control interno y no posee permisos de escritura (`INSERT`, `UPDATE`, `DELETE`) en ninguna tabla.
+3. **`ai_reader`** (Agente de Automatización IA):
+   - Acceso restringido exclusivamente a vistas agregadas y métricas precalculadas de `gold` y `ops.anomaly_alerts`.
+   - **Aislamiento absoluto**: El contenedor de inferencia Ollama ni el modelo local conocen credenciales de base de datos ni tienen conexión de red con PostgreSQL. Los datos analíticos precalculados son suministrados mediante scripts Python intermedios controlados.
+
+### Aislamiento de Red en Contenedores
+- Todos los servicios se ejecutan dentro de la red privada tipo puente `seismic_network`.
+- La base de datos expone su puerto interno `5432` a los contenedores y un mapeo configurable (`5433` por defecto) al host local para evitar colisiones con instancias de PostgreSQL preexistentes.
+- FastAPI se expone en el puerto `8000`, Airflow en el `8080`, el Dashboard web en el `3000` y Ollama en el `11434`.

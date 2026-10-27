@@ -254,3 +254,116 @@ Se aplican principios de mínimos privilegios y segregación estricta de funcion
 
 > [!SECURITY]
 > El modelo de IA local (Ollama) no tiene acceso ni credenciales directas a la base de datos. El script de Python que lo invoca obtiene los datos precalculados de Gold utilizando el rol `ai_reader`, formula el prompt y posteriormente persiste el resultado en `ops` utilizando el rol `pipeline`.
+
+---
+
+## 4. Justificación Técnica de Tipos de Datos
+
+| Tipo SQL | Columnas Clave | Justificación Técnica |
+| :--- | :--- | :--- |
+| `TIMESTAMPTZ` | `time_utc`, `ingested_at`, `updated_at_utc`, `hour_bucket` | Garantiza precisión temporal absoluta independiente de la zona horaria del host o contenedor, estandarizando todo en UTC. |
+| `JSONB` | `bronze.earthquakes.payload`, `failed_rules` | Almacena estructuras semiestructuradas de forma binaria optimizada con soporte nativo de indexación GIN, permitiendo consultas internas y preservando la integridad del GeoJSON crudo original. |
+| `NUMERIC(4,2)` | `magnitude` | Evita los errores de redondeo de punto flotante IEEE 754 binario (`FLOAT/DOUBLE`) en magnitudes sísmicas que típicamente tienen 2 decimales (ej. 5.72). |
+| `NUMERIC(9,6)` | `latitude`, `longitude` | Proporciona una precisión submétrica (hasta ~11 cm en el ecuador), adecuada para coordenadas geográficas instrumentales sin deriva binaria. |
+| `NUMERIC(6,2)` | `depth_km` | Permite representar profundidades desde 0.00 hasta 9999.99 km con dos decimales de precisión fija. |
+| `UUID` | `batch_id` | Identificador universal único para trazabilidad de cada corrida de extracción de Airflow a lo largo de las capas. |
+| `BIGSERIAL` | `id` en Bronze, Metrics y Ops | Clave primaria surrogate de 64 bits para soportar alto volumen secuencial sin riesgo de desbordamiento de enteros estándar. |
+
+---
+
+## 5. Políticas de Retención, Deduplicación y Preservación
+
+1. **Preservación Inmutable en Bronze**:
+   - Todo feature GeoJSON retornado por el API del USGS se almacena íntegro en `bronze.earthquakes.payload`.
+   - La inserción es estrictamente *append-only*. Si el USGS publica una revisión de un sismo anterior (con el mismo `event_id` pero distinto `source_updated_at`), Bronze almacena ambos eventos como filas independientes para auditoría forense.
+2. **Deduplicación en Silver**:
+   - PySpark evalúa registros duplicados por `event_id` dentro del lote o contra la historia existente y conserva únicamente el registro con mayor `source_updated_at`.
+   - El traspaso a la tabla final `silver.earthquakes` utiliza `ON CONFLICT (event_id) DO UPDATE ... WHERE EXCLUDED.updated_at_utc >= silver.earthquakes.updated_at_utc`, asegurando que no se sobreescriba un dato con una versión obsoleta.
+3. **Retención de Datos**:
+   - Por diseño, la base de datos almacena el histórico completo de sismos sin purgas destructivas en Bronze ni Silver.
+   - Las tablas analíticas de Gold conservan agregaciones horarias y de 24 horas continuas para análisis temporal y estacional.
+
+---
+
+## 6. Reglas de Calidad y Umbrales Aplicados
+
+El motor PySpark en [`src/quality/rules.py`](file:///home/cohorte-5/Escritorio/prueba_final/src/quality/rules.py) evalúa cada lote contra 5 reglas obligatorias:
+
+| Regla | Expresión de Validación | Criterio de Aceptación | Acción ante Infracción |
+| :--- | :--- | :--- | :--- |
+| `rule_id_not_null` | `col("event_id").isNotNull() & (col("event_id") != "")` | ID no nulo y no vacío | Descarte en memoria, suma a `failed_rules["rule_id_not_null"]` |
+| `rule_magnitude_valid` | `col("magnitude").isNotNull() & (magnitude >= -2.0) & (magnitude <= 10.0)` | Rango físico admisible | Descarte en memoria, suma a `failed_rules["rule_magnitude_valid"]` |
+| `rule_time_valid` | `col("time_utc").isNotNull() & (time_utc <= current_timestamp())` | Fecha válida no futura | Descarte en memoria, suma a `failed_rules["rule_time_valid"]` |
+| `rule_coordinates_valid` | `lat.between(-90, 90) & lon.between(-180, 180)` | Coordenadas en límites terrestres | Descarte en memoria, suma a `failed_rules["rule_coordinates_valid"]` |
+| `rule_tsunami_valid` | `col("tsunami_alert").isNotNull()` | Indicador booleano presente | Descarte en memoria, suma a `failed_rules["rule_tsunami_valid"]` |
+
+- **Umbral de Calidad del Pipeline**: Si el porcentaje de calidad (`quality_score = (valid / total) * 100`) cae por debajo del 80.0%, el pipeline de Airflow emite una advertencia crítica en logs. Si es 0%, aborta la corrida para evitar propagar datos corruptos a Gold.
+- **Sin Tablas de Cuarentena**: Los eventos descartados nunca se insertan en tablas provisionales de "cuarentena"; únicamente se auditan en `metrics.data_quality`.
+
+---
+
+## 7. Variables de Entorno y Configuración
+
+| Variable | Descripción | Valor por Defecto |
+| :--- | :--- | :--- |
+| `POSTGRES_HOST` | Host de base de datos PostgreSQL | `postgres` (o `localhost`) |
+| `POSTGRES_PORT` | Puerto interno del contenedor | `5432` |
+| `POSTGRES_HOST_PORT` | Puerto mapeado al host | `5433` |
+| `POSTGRES_DB` | Nombre de la base de datos principal | `seismic_platform` |
+| `POSTGRES_USER` | Usuario administrador para DDL inicial | `postgres_admin` |
+| `POSTGRES_PIPELINE_PASSWORD` | Contraseña del rol `pipeline` | `pipeline_example_password` |
+| `POSTGRES_API_READER_PASSWORD` | Contraseña del rol `api_reader` | `api_reader_example_password` |
+| `POSTGRES_AI_READER_PASSWORD` | Contraseña del rol `ai_reader` | `ai_reader_example_password` |
+| `USGS_API_BASE_URL` | Endpoint público del USGS | `https://earthquake.usgs.gov/fdsnws/event/1/query` |
+| `USGS_MIN_MAGNITUDE` | Magnitud mínima de filtrado en ingesta | `2.5` |
+| `INGEST_INTERVAL_MINUTES` | Periodicidad del DAG en minutos | `15` |
+| `SPARK_MASTER` | Modo de ejecución de PySpark | `local[*]` |
+| `SPARK_DRIVER_MEMORY` | Memoria máxima de driver Spark | `1g` |
+| `SPARK_SHUFFLE_PARTITIONS` | Particiones de shuffle en memoria | `4` |
+| `API_HOST` / `API_PORT` | Escucha del backend FastAPI | `0.0.0.0` / `8000` |
+| `OLLAMA_BASE_URL` | Endpoint del servicio Ollama | `http://ollama:11434` (o `localhost:11434`) |
+| `OLLAMA_MODEL` | Modelo ligero SLM (<= 3B parámetros) | `llama3.2:1b` |
+| `AI_TIMEOUT_SECONDS` | Tiempo límite de inferencia Ollama | `45` |
+| `AI_COST_PER_TOKEN` | Tarifa estimada por token procesado | `0.0` (cero por defecto para local) |
+| `ANOMALY_ZSCORE_THRESHOLD` | Umbral estadístico para emitir alerta | `3.0` |
+| `ANOMALY_MIN_OBSERVATIONS` | Mínimo de horas históricas para Z-Score | `24` |
+| `OPENMETADATA_SERVER_URL` | Endpoint de catálogo OpenMetadata | `http://openmetadata-server:8585` |
+
+---
+
+## 8. Procedimientos Operativos y Recuperación ante Fallos
+
+### Caída del Pipeline o Falla de Red con USGS
+1. Si la API de USGS responde `429 Too Many Requests` o `5xx`, el cliente HTTP reintenta automáticamente hasta 3 veces con retroceso exponencial (`backoff_factor=1.5`).
+2. Si la ingesta falla por completo, la marca de agua en `ops.ingestion_watermark` **no avanza**. En la siguiente ejecución, Airflow retoma la extracción desde la última marca exitosa, garantizando cero pérdida de eventos.
+
+### Falla en la Tarea PySpark (Memoria o JDBC)
+1. Dado que PySpark escribe primero en tablas temporales de staging (`silver._staging_*` y `gold._staging_*`) con aislamiento transaccional, un fallo a mitad de cálculo nunca corrompe ni borra las tablas productivas de `silver.earthquakes` ni `gold.earthquakes`.
+2. Para recuperar manualmente una corrida fallida:
+   ```bash
+   python -m src.processing.bronze_to_silver
+   python -m src.processing.silver_to_gold
+   ```
+
+### Indisponibilidad de Ollama o Timeout de Inferencia
+1. Las llamadas a Ollama están protegidas con un timeout estricto de 45 segundos y un máximo de 2 reintentos.
+2. Si el contenedor de Ollama no responde o el modelo excede el timeout, el sistema activa automáticamente el **fallback determinista**:
+   - Redacta la explicación narrativa de la anomalía o el reporte ejecutivo utilizando plantillas formales basadas en las métricas numéricas ya calculadas.
+   - Registra el evento en `ops.ai_executions` con `status='fallback'` y `used_fallback=true`.
+   - **El pipeline principal y la disponibilidad de datos nunca se interrumpen**.
+
+---
+
+## 9. Gobernanza de Prompts y Validación de Respuestas IA
+
+1. **Prompts Versionados**:
+   - Todo prompt utilizado se encuentra en archivos de texto versionados en el directorio [`prompts/`](file:///home/cohorte-5/Escritorio/prueba_final/prompts/) (`anomaly_v1.txt`, `daily_summary_v1.txt`).
+   - Las variables y cifras se inyectan mediante marcadores estandarizados sustituidos por Python (`{region}`, `{event_count}`, `{z_score}`, `{max_magnitude}`).
+2. **Validación Estructurada Pydantic**:
+   - Las respuestas de la IA se reciben y validan obligatoriamente contra modelos Pydantic (`AnomalyExplanationOutput`, `DailySummaryReportOutput`).
+   - Si el modelo retorna texto no estructurado o un JSON incompleto, se rechaza y se recurre al fallback.
+3. **Control Anti-Alucinación y Consistencia Numérica**:
+   - Las cifras retornadas por el modelo son validadas contra los valores exactos precalculados. Si el modelo altera el conteo de eventos, la magnitud o afirma capacidad predictiva de futuros terremotos, la salida es descartada y sustituida por el fallback formal.
+4. **Estimación de Costo Local**:
+   - Para modelos locales ejecutados en CPU/GPU propia, el costo monetario directo por token es 0.0 (`AI_COST_PER_TOKEN=0.0`).
+   - Si se configura una tarifa alternativa (ej. costo de amortización de infraestructura o electricidad), el sistema calcula el costo proporcional: `(input_tokens + output_tokens) * AI_COST_PER_TOKEN`.
