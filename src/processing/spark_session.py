@@ -10,6 +10,26 @@ from src.common.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+def _ensure_java_home() -> None:
+    """Detecta y configura automáticamente JAVA_HOME si no está exportada en el entorno."""
+    if "JAVA_HOME" in os.environ and os.path.exists(os.environ["JAVA_HOME"]):
+        return
+
+    # Rutas candidatas comunes (entorno Docker y host local)
+    candidates = [
+        "/usr/lib/jvm/java-17-openjdk-amd64",
+        os.path.expanduser("~/.local/share/jvm/jdk-17.0.21+9-jre"),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate) and os.path.exists(os.path.join(candidate, "bin", "java")):
+            os.environ["JAVA_HOME"] = candidate
+            java_bin = os.path.join(candidate, "bin")
+            if java_bin not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = f"{java_bin}:{os.environ.get('PATH', '')}"
+            logger.info("JAVA_HOME autodetectada y configurada en: %s", candidate)
+            return
+
+
 def build_spark_session(
     app_name: str = "SeismicPlatformSpark",
     master: Optional[str] = None,
@@ -25,6 +45,7 @@ def build_spark_session(
     - spark.ui.enabled: false (sin servidor web superfluo en pipelines batch)
     """
     settings = get_settings()
+    _ensure_java_home()
 
     jar_path = settings.spark.jar_path
     spark_master = master or settings.spark.master
