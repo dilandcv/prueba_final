@@ -185,6 +185,22 @@ Distribución agregada de eventos clasificados en rangos (ej. `2.5-3.4`, `3.5-4.
 #### `gold.regional_ranking`
 Tabla de posiciones de las regiones con mayor cantidad de sismos y magnitud máxima en las últimas 24 horas.
 
+| Columna | Tipo | Nulo | Descripción |
+| :--- | :--- | :---: | :--- |
+| `region` | `VARCHAR(100)` | No | Nombre de la región (PK). |
+| `total_events_24h` | `INT` | No | Total de sismos en la ventana móvil de 24 horas. |
+| `max_magnitude_24h` | `NUMERIC(4,2)` | Sí | Magnitud máxima registrada en las últimas 24 horas. |
+| `updated_at` | `TIMESTAMPTZ` | No | Timestamp de última actualización analítica. |
+
+#### Tablas Técnicas de Staging en Gold
+Para permitir la escritura idempotente por lotes desde PySpark por JDBC hacia PostgreSQL, la capa Gold dispone de tablas intermedias volátiles con esquema idéntico a las tablas finales pero sin restricciones de clave primaria:
+- `gold._staging_earthquakes`
+- `gold._staging_hourly_regional_stats`
+- `gold._staging_magnitude_distribution`
+- `gold._staging_regional_ranking`
+
+Estas tablas son reescritas con `mode("overwrite")` por Spark y volcadas de forma atómica mediante sentencias SQL `INSERT ... ON CONFLICT DO UPDATE` y `TRUNCATE + INSERT` dentro de una transacción única gestionada por `psycopg`.
+
 ---
 
 ### Esquema de Calidad (`metrics`)

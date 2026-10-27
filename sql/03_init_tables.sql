@@ -119,6 +119,21 @@ CREATE TABLE IF NOT EXISTS gold.regional_ranking (
 
 COMMENT ON TABLE gold.regional_ranking IS 'Ranking de regiones más activas en las últimas 24 horas.';
 
+-- Tablas de staging técnico para permitir escritura idempotente de Spark por JDBC en Gold
+CREATE TABLE IF NOT EXISTS gold._staging_earthquakes (
+    LIKE gold.earthquakes INCLUDING ALL EXCLUDING CONSTRAINTS
+);
+CREATE TABLE IF NOT EXISTS gold._staging_hourly_regional_stats (
+    LIKE gold.hourly_regional_stats INCLUDING ALL EXCLUDING CONSTRAINTS
+);
+CREATE TABLE IF NOT EXISTS gold._staging_magnitude_distribution (
+    LIKE gold.magnitude_distribution INCLUDING ALL EXCLUDING CONSTRAINTS
+);
+CREATE TABLE IF NOT EXISTS gold._staging_regional_ranking (
+    LIKE gold.regional_ranking INCLUDING ALL EXCLUDING CONSTRAINTS
+);
+COMMENT ON TABLE gold._staging_earthquakes IS 'Tabla intermedia volátil para el patrón Spark JDBC overwrite + SQL Upsert en Gold.';
+
 
 -- ------------------------------------------------------------------------------
 -- 4. ESQUEMA METRICS (Auditoría de calidad)
