@@ -21,6 +21,13 @@ GRANT ALL PRIVILEGES ON TABLES TO pipeline;
 ALTER DEFAULT PRIVILEGES IN SCHEMA bronze, silver, gold, metrics, ops
 GRANT ALL PRIVILEGES ON SEQUENCES TO pipeline;
 
+-- Asignación de propiedad de las tablas staging al rol pipeline para permitir TRUNCATE / OVERWRITE de Spark
+ALTER TABLE silver._staging_earthquakes OWNER TO pipeline;
+ALTER TABLE gold._staging_earthquakes OWNER TO pipeline;
+ALTER TABLE gold._staging_hourly_regional_stats OWNER TO pipeline;
+ALTER TABLE gold._staging_magnitude_distribution OWNER TO pipeline;
+ALTER TABLE gold._staging_regional_ranking OWNER TO pipeline;
+
 
 -- ------------------------------------------------------------------------------
 -- 2. Permisos para ROL api_reader (FastAPI Backend)

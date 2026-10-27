@@ -2,12 +2,45 @@
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import socket
+
+
+def _load_env_file() -> None:
+    """Carga variables desde el archivo .env si existe y no están definidas."""
+    env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+
+
+_load_env_file()
+
+
+def _resolve_db_host_port() -> tuple[str, int]:
+    """Resuelve dinámicamente host y puerto según se ejecute en Docker o en host local."""
+    configured_host = os.getenv("POSTGRES_HOST", "postgres")
+    configured_port = int(os.getenv("POSTGRES_PORT", "5432"))
+    if configured_host == "postgres":
+        try:
+            socket.gethostbyname("postgres")
+            return configured_host, configured_port
+        except (socket.gaierror, OSError):
+            host_port = int(os.getenv("POSTGRES_HOST_PORT", "5433"))
+            return "localhost", host_port
+    return configured_host, configured_port
 
 
 @dataclass(frozen=True)
 class DatabaseSettings:
-    host: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "postgres"))
-    port: int = field(default_factory=lambda: int(os.getenv("POSTGRES_PORT", "5432")))
+    host: str = field(default_factory=lambda: _resolve_db_host_port()[0])
+    port: int = field(default_factory=lambda: _resolve_db_host_port()[1])
     name: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", "seismic_platform"))
     user: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", "postgres_admin"))
     password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "postgres_example_password"))

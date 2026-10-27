@@ -4,7 +4,7 @@ from src.common.config import get_settings
 
 def test_default_settings(default_settings):
     """Verifica que las configuraciones por defecto correspondan a los valores esperados."""
-    assert default_settings.db.port == 5432
+    assert default_settings.db.port in (5432, 5433)
     assert default_settings.db.name == "seismic_platform"
     assert default_settings.usgs.min_magnitude == 2.5
     assert default_settings.usgs.ingest_interval_minutes == 15
