@@ -140,7 +140,11 @@ def record_agent_trace(
         logger.debug("Error registrando traza del agente: %s", exc)
 
 
-def process_chat_message(message: str, history: Optional[list[ChatMessageItem]] = None) -> ChatResponse:
+def process_chat_message(
+    message: str,
+    history: Optional[list[ChatMessageItem]] = None,
+    skip_llm: bool = False,
+) -> ChatResponse:
     """Orquesta el flujo del agente: intención -> herramientas -> síntesis -> verificación -> traza."""
     t_start = time.time()
     clean_msg = message.strip()
@@ -192,25 +196,84 @@ def process_chat_message(message: str, history: Optional[list[ChatMessageItem]] 
             latency_ms=elapsed_ms,
         )
 
-    # 5. Síntesis y Verificación Anti-Alucinación
-    # Genera la síntesis determinista verificada
-    synthesis = build_deterministic_synthesis(intent_res, tool_results)
+    # 5. Síntesis Verificada y Generación con Modelo Local
+    deterministic_synthesis = build_deterministic_synthesis(intent_res, tool_results)
 
-    # Valida que no haya afirmaciones predictivas ni números espurios
-    is_valid, violation = verify_response_consistency(synthesis, tool_results, intent_res.intent)
-    if not is_valid:
-        logger.warning("Respuesta corregida por violar consistencia: %s", violation)
-        synthesis += "\n\n*Nota: Corrección aplicada por política de no-predicción.*"
+    final_text = deterministic_synthesis
+    used_fallback = True
+    model_name = "deterministic_fallback"
+
+    if not skip_llm:
+        try:
+            system_prompt = (
+                "Eres el Asistente Analítico de la Plataforma Sísmica USGS.\n"
+                "Comunica al usuario los datos analíticos registrados en el sistema de forma profesional, clara y fluida en español.\n"
+                "REGLAS OBLIGATORIAS:\n"
+                "1. Utiliza ÚNICAMENTE los datos oficiales provistos. NO inventes eventos ni cifras.\n"
+                "2. ADVERTENCIA NO PREDICTIVA FUNDAMENTAL: Los terremotos NO se pueden predecir ni es posible pronosticar sismos futuros.\n"
+                "3. No te disculpes ni digas que no tienes acceso en tiempo real, pues los datos ya fueron extraídos y registrados en la plataforma.\n"
+                "4. Responde de manera directa, clara y concisa en una o dos oraciones."
+            )
+
+            user_prompt = (
+                f"Información verificada: {deterministic_synthesis}\n\n"
+                f"Consulta del usuario: {clean_msg}\n\n"
+                "Redacta una respuesta concisa, profesional y fluida en español para el usuario "
+                "basándote exclusivamente en la información verificada anterior:"
+            )
+            if history:
+                recent_history = history[-4:]
+                hist_lines = []
+                for h in recent_history:
+                    role_label = "Usuario" if h.role == "user" else "Asistente"
+                    hist_lines.append(f"{role_label}: {h.content}")
+                user_prompt = (
+                    f"Información verificada: {deterministic_synthesis}\n\n"
+                    f"Historial previo:\n" + "\n".join(hist_lines) + f"\n\nConsulta del usuario: {clean_msg}\n\n"
+                    "Redacta una respuesta concisa, profesional y fluida en español para el usuario "
+                    "basándote exclusivamente en la información verificada anterior:"
+                )
+
+            client = OllamaClient()
+            ai_res = client.generate(
+                prompt=user_prompt,
+                system=system_prompt,
+                fallback_fn=lambda _: deterministic_synthesis,
+                fallback_data=tool_results,
+            )
+
+            if not ai_res.used_fallback and ai_res.text:
+                is_valid, violation = verify_response_consistency(ai_res.text, tool_results, intent_res.intent)
+                if is_valid:
+                    final_text = ai_res.text
+                    if intent_res.intent == "CONSULTA_DOCUMENTACION" and "Fuente:" not in final_text and "Fuente" not in final_text:
+                        final_text += "\n\n*Fuente: Documentación técnica del proyecto.*"
+                    used_fallback = False
+                    model_name = ai_res.model_name
+                else:
+                    logger.warning("Respuesta de Ollama rechazada por consistencia (%s). Usando fallback.", violation)
+                    final_text = deterministic_synthesis
+                    used_fallback = True
+                    model_name = "deterministic_fallback"
+            else:
+                final_text = ai_res.text or deterministic_synthesis
+                used_fallback = True
+                model_name = "deterministic_fallback"
+        except Exception as exc:
+            logger.warning("Error invocando Ollama: %s. Utilizando respaldo determinista.", exc)
+            final_text = deterministic_synthesis
+            used_fallback = True
+            model_name = "deterministic_fallback"
 
     elapsed_ms = int((time.time() - t_start) * 1000)
 
     # 6. Registro de Observabilidad
-    record_agent_trace(clean_msg, intent_res.intent, tools_executed, elapsed_ms, True, None)
+    record_agent_trace(clean_msg, intent_res.intent, tools_executed, elapsed_ms, used_fallback, None)
 
     return ChatResponse(
-        response=synthesis,
-        model_name="deterministic_fallback",
-        used_fallback=True,
+        response=final_text,
+        model_name=model_name,
+        used_fallback=used_fallback,
         intent=intent_res.intent,
         tools_used=tools_executed,
         latency_ms=elapsed_ms,

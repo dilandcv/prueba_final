@@ -171,12 +171,23 @@ def verify_response_consistency(
     tool_results: dict[str, Any],
     intent: str,
 ) -> tuple[bool, Optional[str]]:
-    """Verifica que la respuesta no contenga afirmaciones predictivas de terremotos."""
+    """Verifica que la respuesta no contenga afirmaciones predictivas ni evasiones por corte de entrenamiento."""
     lower = text.lower()
     predictive_claims = ["habrá un terremoto confirmado", "terremoto ocurrirá con certeza"]
     for claim in predictive_claims:
         if claim in lower:
             return False, f"Afirmación predictiva prohibida detectada: '{claim}'"
+
+    evasion_patterns = [
+        "no tengo acceso a datos en tiempo real",
+        "no tengo acceso a información en tiempo real",
+        "mi conocimiento se detiene",
+        "fecha de corte",
+        "no dispongo de información en tiempo real",
+    ]
+    for evasion in evasion_patterns:
+        if evasion in lower:
+            return False, f"Evasión por corte temporal detectada: '{evasion}'"
 
     return True, None
 

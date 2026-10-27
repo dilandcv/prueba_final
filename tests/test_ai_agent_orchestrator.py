@@ -11,7 +11,7 @@ def test_agent_orchestrator_benchmark_suite():
     """Garantiza que el agente cumpla los criterios cuantitativos en las 12 categorías."""
     def agent_adapter(msg: str, hist: Optional[list] = None) -> dict[str, Any]:
         history_items = [ChatMessageItem(role=h["role"], content=h["content"]) for h in hist] if hist else None
-        res = process_chat_message(msg, history_items)
+        res = process_chat_message(msg, history_items, skip_llm=True)
         return {
             "response": res.response,
             "intent": res.intent,
@@ -34,7 +34,7 @@ def test_agent_conversational_follow_up_context():
         ChatMessageItem(role="user", content="¿Cuántos sismos se registraron en los últimos 7 días?"),
         ChatMessageItem(role="assistant", content="Se registraron 355 sismos en los últimos 7 días."),
     ]
-    resp = process_chat_message("¿Y cuántos superaron magnitud 4?", history)
+    resp = process_chat_message("¿Y cuántos superaron magnitud 4?", history, skip_llm=True)
     assert resp.intent == "CONSULTA_SISMICA"
     assert "get_earthquake_statistics" in resp.tools_used
     assert "magnitud 4" in resp.response or "4.0" in resp.response
@@ -55,7 +55,7 @@ def test_agent_out_of_domain_and_jailbreak_rejection():
 
 def test_agent_documentation_rag_retrieval():
     """Comprueba la recuperación documental RAG con citas para preguntas de arquitectura."""
-    resp = process_chat_message("¿Cómo funciona la arquitectura Medallion en este proyecto?")
+    resp = process_chat_message("¿Cómo funciona la arquitectura Medallion en este proyecto?", skip_llm=True)
     assert resp.intent == "CONSULTA_DOCUMENTACION"
     assert "search_project_documentation" in resp.tools_used
     assert "Bronze" in resp.response
@@ -67,7 +67,7 @@ def test_agent_documentation_rag_retrieval():
 def test_agent_observability_trace_persisted():
     """Verifica que cada interacción quede registrada en ops.ai_agent_traces."""
     unique_msg = "Consulta de prueba para traza de observabilidad"
-    resp = process_chat_message(unique_msg)
+    resp = process_chat_message(unique_msg, skip_llm=True)
     assert resp is not None
 
     with get_db_connection(role="ai_reader") as conn:
