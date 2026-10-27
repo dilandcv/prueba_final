@@ -28,9 +28,15 @@ flowchart TD
     GOLD -->|ai_reader| AI_MODULE["Módulo IA Local (Ollama)"]
     AI_MODULE --> OPS[("ops.anomaly_alerts / ai_executions")]
 
+    GOLD -->|ai_reader (Herramientas)| AGENT["Agente Conversacional IA\n(Herramientas + RAG + Verificador)"]
+    DOCS[("Documentación Técnica\n(docs/*.md)")] -->|Búsqueda BM25| AGENT
+    AGENT --> TRACES[("ops.ai_agent_traces")]
+    AGENT <-->|Inferencia Local / Fallback| AI_MODULE
+
     GOLD -->|api_reader| FASTAPI["Backend FastAPI"]
+    AGENT --> FASTAPI
     DAG -.->|Notificación| FASTAPI
-    FASTAPI -->|SSE / REST| REACT["Frontend React (Leaflet + Tailwind)"]
+    FASTAPI -->|SSE / REST| REACT["Frontend React (Leaflet + Chatbot + Tailwind)"]
 ```
 
 ---
@@ -133,3 +139,76 @@ La base de datos implementa tres roles técnicos con permisos estrictamente acot
 - Todos los servicios se ejecutan dentro de la red privada tipo puente `seismic_network`.
 - La base de datos expone su puerto interno `5432` a los contenedores y un mapeo configurable (`5433` por defecto) al host local para evitar colisiones con instancias de PostgreSQL preexistentes.
 - FastAPI se expone en el puerto `8000`, Airflow en el `8080`, el Dashboard web en el `3000` y Ollama en el `11434`.
+
+---
+
+## 5. Agente Conversacional de IA, Orquestación de Herramientas y RAG
+
+La plataforma dispone de un agente analítico inteligente en [`src/ai/chat_service.py`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/chat_service.py) diseñado para responder consultas técnicas y analíticas sin alucinaciones:
+
+```mermaid
+flowchart TD
+    Q["Mensaje del Usuario + Historial"] --> STATE["Extracción de Estado & Memoria\n(_extract_conversation_state)"]
+    STATE --> INTENT["Clasificador de Intención & Entidades\n(classify_intent)"]
+    
+    INTENT -->|FUERA_DE_DOMINIO / JAILBREAK| POLICY["Política Inmediata de Rechazo\n(model_name: deterministic_policy)"]
+    INTENT -->|CONSULTA_AMBIGUA| AMB["Solicitud Determinista de Aclaración"]
+    INTENT -->|CONSULTA_SISMICA / MIXTA| TOOLS["Ejecución de Herramientas Analíticas\n(PostgreSQL Gold bajo ai_reader)"]
+    INTENT -->|CONSULTA_DOCUMENTACION| RAG["Búsqueda Documental RAG\n(Archivos docs/*.md con citas)"]
+
+    TOOLS --> SYNTH["Síntesis Determinista Verificada\n(build_deterministic_synthesis)"]
+    RAG --> SYNTH
+
+    SYNTH --> OLLAMA["Inferencia con Modelo Local\n(OllamaClient: llama3.2:1b)"]
+    OLLAMA -->|Respuesta exitosa| VERIF["Verificador de Consistencia & No-Predicción\n(verify_response_consistency)"]
+    OLLAMA -->|Falla / Timeout 45s / Evasión| FALLBACK["Degradación a Fallback Determinista\n(used_fallback: true)"]
+
+    VERIF -->|Coherente & Sin Predicciones| OK["Entrega al Usuario\n(used_fallback: false)"]
+    VERIF -->|Inconsistente / Predictivo| FALLBACK
+
+    OK --> TRACE["Auditoría No Bloqueante\n(ops.ai_agent_traces)"]
+    FALLBACK --> TRACE
+    POLICY --> TRACE
+    AMB --> TRACE
+```
+
+### 1. Clasificación de Intenciones y Seguridad
+El módulo [`src/ai/intent.py`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/intent.py) procesa el mensaje del usuario y su historial previo:
+- **Seguridad y Rechazo Fuera de Dominio**: Detecta temas no relacionados (ej. recetas, deportes) e intentos de eludir instrucciones del sistema (jailbreaks), respondiendo inmediatamente sin consultar la base de datos ni invocar al modelo.
+- **Detección de Ambigüedad**: Solicita aclaraciones si la consulta carece de parámetros mínimos para evitar búsquedas costosas.
+- **Enrutamiento Inteligente**: Asigna las herramientas adecuadas según la intención (`CONSULTA_SISMICA`, `CONSULTA_DOCUMENTACION`, `CONSULTA_MIXTA`).
+
+### 2. Catálogo de Herramientas Analíticas (Solo Lectura)
+Ubicadas en [`src/ai/tools/`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/tools/):
+- `get_strongest_earthquake`: Consulta el sismo de mayor magnitud filtrando por fecha y región.
+- `get_earthquake_statistics`: Calcula conteo de eventos, promedio de magnitud y conteo de tsunamis.
+- `get_latest_earthquakes`: Lista cronológica de los últimos eventos registrados.
+- `get_earthquakes_by_region`: Desglose de actividad por región geográfica.
+- `compare_earthquake_periods`: Compara variaciones de frecuencia y magnitudes entre dos intervalos temporales.
+- `get_magnitude_distribution`: Distribución por intervalos analíticos.
+- `get_anomaly_alerts`: Consulta de alertas estadísticas Z-Score recientes.
+- `get_data_quality_metrics`: Métricas consolidadas del último lote en `metrics.data_quality`.
+
+### 3. Recuperación Documental RAG con Citas de Fuente
+En [`src/ai/rag.py`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/rag.py), la función `search_project_documentation` indexa y busca en tiempo real en los documentos oficiales (`docs/ARQUITECTURA.md`, `docs/MODELO_DATOS.md`, `docs/GOBERNANZA_OPENMETADATA.md`). Las respuestas documentales incluyen obligatoriamente la cita de la fuente técnica correspondiente.
+
+### 4. Memoria Conversacional Multi-Turno
+La función `_extract_conversation_state` analiza los turnos recientes del usuario para resolver referencias implícitas (ej. "¿Cuántos sismos se registraron en los últimos 7 días?" seguido de "¿Y cuántos superaron magnitud 4?"), preservando los filtros temporales y espaciales entre interacciones consecutivas.
+
+### 5. Verificación Anti-Alucinación y Política de No-Predicción
+El verificador [`src/ai/verifier.py`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/verifier.py) analiza cada respuesta antes de enviarla al usuario:
+- **Consistencia de Cifras**: Asegura que el modelo no altere conteos ni magnitudes numéricas.
+- **Advertencia No Predictiva Obligatoria**: Impide categóricamente cualquier afirmación predictiva o pronóstico de futuros sismos, garantizando rigor científico estricto.
+- **Filtro Anti-Evasión**: Detecta respuestas donde el modelo pretenda declinar la consulta alegando fecha de corte de entrenamiento, activando de inmediato el respaldo fidedigno.
+
+### 6. Fallback Determinista y Observabilidad
+- Si Ollama está detenido, excede el tiempo límite de 45s o genera una salida no admitida, el sistema conmuta de forma transparente al motor de síntesis determinista (`build_deterministic_synthesis`).
+- Cada interacción se registra en `ops.ai_agent_traces` (pregunta, intención, herramientas ejecutadas, latencia en ms, si utilizó fallback y motivo de rechazo si aplica).
+
+### 7. Suite de Evaluación Cuantitativa
+El directorio [`src/ai/eval/`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/eval/) contiene un dataset de 41 casos de referencia distribuidos en 12 categorías que evalúan sistemáticamente:
+- Exactitud de intención (meta: >= 95%).
+- Selección correcta de herramientas (meta: >= 95%).
+- Tasa de rechazo de fuera de dominio (meta: 100%).
+- Latencia de enrutamiento y procesamiento.
+Se ejecuta mediante `python -m src.ai.eval.runner` o a través de `pytest tests/test_ai_agent_orchestrator.py`.

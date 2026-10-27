@@ -56,6 +56,7 @@ OpenMetadata cataloga todos los esquemas y tablas de `seismic_platform`:
 | `gold` | `regional_ranking` | `Medallion.Gold` | Ranking de las 10 regiones más activas en las últimas 24h. |
 | `metrics` | `data_quality` | `Governance.Quality` | Registro de métricas de calidad y descarte en memoria por lote. |
 | `ops` | `anomaly_alerts` | `Governance.Operations` | Alertas Z-Score de frecuencia sísmica inusual explicadas por IA. |
+| `ops` | `ai_agent_traces` | `Governance.Operations` | Trazabilidad, intenciones, herramientas y latencia de consultas del asistente IA. |
 
 ---
 

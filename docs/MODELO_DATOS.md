@@ -101,6 +101,18 @@ erDiagram
         varchar airflow_run_id
     }
 
+    OPS_AI_AGENT_TRACES {
+        bigserial id PK
+        timestamptz executed_at
+        text question
+        varchar intent
+        jsonb tools_used
+        jsonb sources
+        int latency_ms
+        boolean used_fallback
+        text rejection_reason
+    }
+
     OPS_ANOMALY_ALERTS }o--|| OPS_AI_EXECUTIONS : "generado_por"
 ```
 
@@ -235,6 +247,25 @@ Almacena alertas de actividad sísmica inusual detectadas por la prueba estadís
 #### `ops.ai_executions`
 Trazabilidad de cada llamada al modelo de IA local (Ollama). Registra tipo de automatización, versión del prompt, tokens procesados, latencia en milisegundos, costo estimado y si se activó el fallback determinista.
 
+#### `ops.ai_agent_traces`
+Observabilidad completa del agente conversacional inteligente. Registra cada consulta enviada por el usuario, la intención clasificada, la lista de herramientas analíticas ejecutadas en la capa Gold, citas de documentos RAG, latencia de procesamiento, indicación de fallback determinista y motivos de rechazo por política o seguridad.
+
+| Columna | Tipo | Nulo | Descripción |
+| :--- | :--- | :---: | :--- |
+| `id` | `BIGSERIAL` | No | Clave primaria surrogate secuencial. |
+| `executed_at` | `TIMESTAMPTZ` | No | Fecha y hora UTC del procesamiento (default `NOW()`). |
+| `question` | `TEXT` | No | Mensaje enviado por el usuario al chatbot. |
+| `intent` | `VARCHAR(50)` | No | Intención detectada (`CONSULTA_SISMICA`, `CONSULTA_DOCUMENTACION`, `FUERA_DE_DOMINIO`, etc.). |
+| `tools_used` | `JSONB` | No | Arreglo JSON con los identificadores de herramientas analíticas ejecutadas. |
+| `sources` | `JSONB` | No | Fuentes documentales citadas en consultas RAG. |
+| `latency_ms` | `INT` | No | Latencia total de inferencia o síntesis en milisegundos. |
+| `used_fallback` | `BOOLEAN` | No | Bandera que confirma si la respuesta provino del motor determinista. |
+| `rejection_reason` | `TEXT` | Sí | Causa de rechazo si la consulta infringió políticas de seguridad o alcance. |
+
+**Índices**:
+- `idx_ops_traces_executed_at` en `(executed_at)`
+- `idx_ops_traces_intent` en `(intent)`
+
 ---
 
 ## 3. Seguridad y Matriz de Roles
@@ -250,6 +281,7 @@ Se aplican principios de mínimos privilegios y segregación estricta de funcion
 | `ops.data_availability` | `ALL` | `SELECT` | *Sin acceso* |
 | `ops.anomaly_alerts` | `ALL` | `SELECT` | `SELECT` |
 | `ops.ai_executions` | `ALL` | *Sin acceso* | *Sin acceso* |
+| `ops.ai_agent_traces` | `ALL` | `SELECT` | `SELECT` |
 | `ops.ingestion_watermark` | `ALL` | *Sin acceso* | *Sin acceso* |
 
 > [!SECURITY]

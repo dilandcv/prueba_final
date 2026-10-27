@@ -32,9 +32,15 @@ flowchart TD
     GOLD -->|ai_reader (Solo Lectura)| AI_MOD["Módulo IA Local\n(Ollama llama3.2:1b + Fallback)"]
     AI_MOD --> OPS[("ops.anomaly_alerts & ai_executions")]
 
+    GOLD -->|ai_reader (Herramientas Analíticas)| CHAT["Agente IA Conversacional\n(Herramientas + RAG + Verificación)"]
+    DOCS[("Documentación Técnica\n(docs/*.md)")] -->|RAG BM25| CHAT
+    CHAT --> TRACES[("ops.ai_agent_traces")]
+    CHAT <-->|Inferencia Local / Fallback| AI_MOD
+
     GOLD -->|api_reader (Solo Lectura)| API["FastAPI Backend\n(Puerto 8000)"]
+    CHAT --> API
     T5 -.->|Notificación SSE| API
-    API -->|REST + SSE| DASHBOARD["Dashboard Web React\n(Leaflet + Tailwind, Puerto 3000)"]
+    API -->|REST + SSE| DASHBOARD["Dashboard Web React\n(Leaflet + Chatbot + Tailwind, Puerto 3000)"]
 ```
 
 > [!IMPORTANT]
@@ -120,6 +126,9 @@ python -m src.ai.anomaly_detector
 
 # 5. Reporte Ejecutivo Diario
 python -m src.ai.daily_report
+
+# 6. Evaluación Cuantitativa del Agente Conversacional (Benchmark de 41 casos)
+python -m src.ai.eval.runner
 ```
 
 ---
@@ -139,10 +148,17 @@ El backend expone endpoints analíticos validados con Pydantic y documentados in
 | `GET` | `/api/v1/quality/summary` | Última evaluación de calidad de datos y porcentaje de cumplimiento. |
 | `GET` | `/api/v1/alerts/anomalies` | Alertas estadísticas Z-Score detectadas y explicadas. |
 | `GET` | `/api/v1/pipeline/status` | Última disponibilidad confirmada del pipeline de datos. |
+| `POST` | `/api/v1/ai/chat` | **Agente Conversacional**: Interacción multi-turno con herramientas sobre Gold, RAG documental y fallback determinista. |
+| `GET` | `/api/v1/ai/reports` | Listado de reportes ejecutivos y auditorías narrativas generadas por IA local. |
 | `GET` | `/api/v1/events/live-stream` | **Flujo SSE**: Notificaciones en tiempo real al finalizar lotes exitosos. |
 
 ### Ejemplos con `curl`
 ```bash
+# Consultar al agente de IA conversacional
+curl -s -X POST http://localhost:8000/api/v1/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "¿Cuál fue el sismo de mayor magnitud en las últimas 24 horas?"}' | jq .
+
 # Consultar indicadores globales
 curl -s http://localhost:8000/api/v1/indicators | jq .
 
@@ -162,16 +178,29 @@ Disponible en [http://localhost:3000](http://localhost:3000):
 - **Gráficos Dinámicos**: Serie temporal por hora, distribución por intervalos de magnitud y ranking regional.
 - **Mapa Leaflet**: Visualización geoespacial con círculos proporcionales a la magnitud y popups con detalles del evento (profundidad, magnitud, fecha UTC).
 - **Filtros Unificados**: Fecha inicial, fecha final, magnitud mínima y filtro por región sísmica.
+- **Chatbot Inteligente Integrado**: Cajón deslizable (*drawer*) accesible desde el botón "Asistente IA" en la barra de navegación. Ofrece conversación multi-turno, sugerencias de preguntas rápidas, indicación visual de modelo (`llama3.2:1b` o `fallback determinista`), herramientas empleadas y latencia en milisegundos.
 - **Actualización Automática**: El canal SSE actualiza los datos en pantalla instantáneamente al completarse un nuevo lote sin necesidad de recargar la página.
 
 ---
 
-## 7. Módulo de IA Local y Fallback Determinista
+## 7. Módulo de IA Local, Agente Conversacional y Fallback
 
-- **Modelo**: `llama3.2:1b` (ejecutado localmente mediante Ollama, sin enviar datos a la nube).
-- **Aislamiento**: Ollama no tiene acceso directo a la base de datos ni a sus credenciales.
-- **Validación Estricta**: Respuestas forzadas a JSON y validadas con Pydantic. Si el modelo alucina cifras diferentes a las precalculadas o afirma predecir terremotos, la salida es rechazada de inmediato.
-- **Fallback Determinista**: Si Ollama no está iniciado, no responde en 45 segundos o falla la sintaxis JSON, el sistema genera automáticamente una explicación técnica formal basada en reglas matemáticas precalculadas sin interrumpir el flujo.
+La plataforma incorpora capacidades analíticas y conversacionales basadas en el modelo local `llama3.2:1b` (<= 3B parámetros) orquestado con Ollama:
+
+1. **Automatizaciones por Lotes (Batch)**:
+   - **Detección de anomalías Z-Score**: Genera explicaciones estadísticas en lenguaje natural validadas con Pydantic (`AnomalyStructuredOutput`).
+   - **Reporte ejecutivo diario**: Consolida la actividad de las últimas 24 horas en un informe estructurado (`DailyReportStructuredOutput`).
+2. **Agente Conversacional con Herramientas y RAG**:
+   - **Clasificador de intención**: Identifica si la consulta es sobre sismos, documentación de arquitectura, ambigua o fuera de dominio. Rechaza consultas ajenas y solicitudes de manipulación de instrucciones (jailbreaks) de inmediato.
+   - **Ejecución de herramientas tipadas**: Consulta exclusivamente PostgreSQL Gold bajo el rol de solo lectura `ai_reader` (`get_strongest_earthquake`, `get_earthquake_statistics`, `get_latest_earthquakes`, `compare_earthquake_periods`, `get_magnitude_distribution`, `get_anomaly_alerts`, `get_data_quality_metrics`).
+   - **RAG sobre documentación técnica**: Búsqueda en los documentos del proyecto con citas de fuente automáticas (`search_project_documentation`).
+   - **Memoria de contexto**: Extrae filtros y regiones de turnos previos para responder preguntas de seguimiento (ej. "¿Y cuántos superaron magnitud 4?").
+   - **Verificación Anti-Alucinación y Política de No-Predicción**: Valida matemáticamente que las cifras coincidan con los datos calculados e impone la advertencia científica de que **los sismos no se pueden predecir**.
+   - **Fallback Determinista**: Si Ollama no está disponible o excede el timeout (45s), el agente responde de forma inmediata utilizando síntesis determinista verificada sin interrumpir el servicio.
+   - **Observabilidad**: Cada consulta, intención, herramientas ejecutadas, latencia y modo de generación se auditan en `ops.ai_agent_traces`.
+3. **Framework de Evaluación Cuantitativa**:
+   - Dataset reproducible de 41 casos de referencia distribuidos en 12 categorías en [`src/ai/eval/`](file:///home/cohorte-5/Escritorio/prueba_final/src/ai/eval/).
+   - Mide exactitud de intención, selección de herramientas, tasa de rechazo fuera de dominio y latencia media (`python -m src.ai.eval.runner`).
 
 ---
 
@@ -210,7 +239,7 @@ python -m src.metadata.service
 
 ## 10. Suite de Pruebas Automatizadas
 
-La plataforma cuenta con 93 pruebas unitarias y de integración que verifican la arquitectura completa:
+La plataforma cuenta con 109 pruebas unitarias y de integración que verifican la arquitectura completa:
 
 ```bash
 pytest
@@ -218,8 +247,21 @@ pytest
 
 Para ejecutar pruebas específicas por módulo:
 ```bash
+# API y endpoints HTTP
 pytest tests/test_api.py -v
-pytest tests/test_spark_environment.py -v
-pytest tests/test_bronze_to_silver.py tests/test_silver_to_gold.py -v
+
+# Entorno Spark y transformaciones Medallón (real)
+pytest tests/test_spark_environment.py tests/test_bronze_to_silver.py tests/test_silver_to_gold.py -v
+
+# Agente conversacional, orquestación de herramientas y RAG
+pytest tests/test_ai_agent_orchestrator.py tests/test_ai_chat.py -v
+
+# Inferencia Ollama, validación Pydantic y fallbacks deterministas
 pytest tests/test_ai_deterministic.py tests/test_ai_ollama_integration.py -v
+
+# Dataset de evaluación y benchmark cuantitativo del agente
+pytest tests/test_ai_evaluation_suite.py -v
+
+# Catálogo y linaje con OpenMetadata
+pytest tests/test_metadata_openmetadata.py -v
 ```
