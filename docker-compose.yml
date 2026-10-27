@@ -216,3 +216,18 @@ services:
       retries: 3
     networks:
       - seismic_net
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: seismic_ollama_init
+    restart: "no"
+    profiles: ["ai"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: /bin/sh
+    command: -c "echo 'Descargando modelo local en Ollama...' && ollama pull $${OLLAMA_MODEL:-llama3.2:1b} && echo 'Modelo listo para inferir.'"
+    networks:
+      - seismic_net

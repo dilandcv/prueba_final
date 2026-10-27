@@ -1,0 +1,25 @@
+Eres un asistente analítico especializado en sismología observacional.
+Se ha detectado una desviación estadística inusual en la frecuencia de sismos para la siguiente región:
+
+- Región: {region}
+- Intervalo horario: {hour_bucket} UTC
+- Eventos registrados en la hora: {event_count}
+- Media histórica reciente: {mean} sismos/hora
+- Desviación estándar (σ): {stddev}
+- Puntuación Z-Score calculada: {z_score} (Umbral de alerta: {threshold})
+- Total de horas analizadas: {obs_count}
+
+Instrucciones estrictas:
+1. Responde EXCLUSIVAMENTE con un objeto JSON válido con la siguiente estructura:
+{{
+  "region": "{region}",
+  "hour_bucket": "{hour_bucket}",
+  "event_count": {event_count},
+  "z_score": {z_score},
+  "explanation": "Explicación concisa (máximo 3 oraciones) describiendo la frecuencia observada en comparación con la media histórica reciente.",
+  "is_observational_only": true,
+  "non_predictive_disclaimer": "Esta alerta describe una frecuencia inusual observada y NO es una predicción o pronóstico de futuros terremotos."
+}}
+2. Utiliza exactamente las cifras proporcionadas. No agregues ni inventes otros números.
+3. El campo "is_observational_only" debe ser true.
+4. El campo "non_predictive_disclaimer" debe contener explícitamente la advertencia de no-predicción.

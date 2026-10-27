@@ -31,7 +31,12 @@ import logging
 from typing import Any, Optional
 
 from src.ai.client import OllamaClient, record_ai_execution
-from src.ai.prompts import PROMPT_ANOMALY_V1, PROMPT_VERSION, format_anomaly_fallback
+from src.ai.prompts import (
+    PROMPT_VERSION,
+    AnomalyStructuredOutput,
+    format_anomaly_fallback,
+    get_anomaly_prompt_template,
+)
 from src.common.config import get_settings
 from src.common.db import get_db_connection
 
@@ -187,11 +192,14 @@ def run_anomaly_detection(
                     "threshold": item.threshold,
                     "obs_count": item.obs_count,
                 }
-                prompt = PROMPT_ANOMALY_V1.format(**prompt_data)
+                template = get_anomaly_prompt_template()
+                prompt = template.format(**prompt_data)
 
-                # Invocación con fallback determinista integrado
+                # Invocación con validación Pydantic y fallback determinista integrado
                 ai_result = client.generate(
                     prompt=prompt,
+                    response_model=AnomalyStructuredOutput,
+                    authorized_data=prompt_data,
                     fallback_fn=format_anomaly_fallback,
                     fallback_data=prompt_data,
                 )

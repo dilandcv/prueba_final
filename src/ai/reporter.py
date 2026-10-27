@@ -10,9 +10,10 @@ from typing import Any, Optional
 
 from src.ai.client import OllamaClient, record_ai_execution
 from src.ai.prompts import (
-    PROMPT_DAILY_SUMMARY_V1,
     PROMPT_VERSION,
+    DailyReportStructuredOutput,
     format_daily_report_fallback,
+    get_daily_summary_prompt_template,
 )
 from src.common.db import get_db_connection
 
@@ -176,11 +177,12 @@ def run_daily_executive_report(airflow_run_id: Optional[str] = None) -> dict[str
         f"vs {trend_info['last_12h_count']} sismos últimas 12h, cambio: {trend_info['change_percent']:+1f}%)"
     )
 
-    prompt = PROMPT_DAILY_SUMMARY_V1.format(
+    template = get_daily_summary_prompt_template()
+    prompt = template.format(
         total_events=metrics["total_events"],
-        max_magnitude=max_ev["magnitude"] if max_ev["magnitude"] is not None else "N/D",
+        max_magnitude=max_ev["magnitude"] if max_ev["magnitude"] is not None else 0.0,
         max_place=max_ev["place"],
-        max_depth=max_ev["depth_km"] if max_ev["depth_km"] is not None else "N/D",
+        max_depth=max_ev["depth_km"] if max_ev["depth_km"] is not None else 0.0,
         max_time=max_ev["time_utc"],
         avg_magnitude=metrics["avg_magnitude"],
         tsunami_alerts_count=metrics["tsunami_alerts_count"],
@@ -189,10 +191,12 @@ def run_daily_executive_report(airflow_run_id: Optional[str] = None) -> dict[str
         trend_str=trend_str,
     )
 
-    # 3. Invocar Ollama o fallback determinista
+    # 3. Invocar Ollama con validación Pydantic o fallback determinista
     client = OllamaClient()
     ai_result = client.generate(
         prompt=prompt,
+        response_model=DailyReportStructuredOutput,
+        authorized_data=metrics,
         fallback_fn=format_daily_report_fallback,
         fallback_data=metrics,
     )

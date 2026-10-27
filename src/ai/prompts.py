@@ -1,58 +1,207 @@
-"""Plantillas de prompts para IA local (Ollama) y fallbacks deterministas.
+"""Gestor de prompts versionados, validación Pydantic y fallbacks deterministas.
 
-Garantiza respuestas consistentes y generación de reportes ejecutivos fidedignos
-incluso ante la indisponibilidad total del modelo de lenguaje.
+Criterio de estimación de costo local:
+La inferencia se ejecuta localmente mediante Ollama sobre hardware propio (CPU/GPU local),
+por lo que no existe facturación de API de terceros. Por defecto, el costo por token es
+0.0 (AI_COST_PER_TOKEN=0.0). Si la organización requiere computar costos de amortización
+de infraestructura o consumo eléctrico, puede definirse una tarifa en AI_COST_PER_TOKEN
+(ej. 0.000001 USD/token).
 """
-from typing import Any, Optional
+import json
+import logging
+from pathlib import Path
+import re
+from typing import Any, Optional, Type, TypeVar
 
+from pydantic import BaseModel, Field, ValidationError
+
+
+logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "v1.0"
+PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
-# Prompt estructurado para la explicación de anomalías por Z-Score
+# Aliases para compatibilidad con código existente
 PROMPT_ANOMALY_V1 = """Eres un asistente analítico especializado en sismología observacional.
-Se ha detectado una desviación estadística inusual en la frecuencia de sismos para la siguiente región:
+Región: {region}, Intervalo: {hour_bucket} UTC, Eventos: {event_count}, Media: {mean}, Stddev: {stddev}, Z-Score: {z_score}.
+Responde en JSON con region, hour_bucket, event_count, z_score, explanation, is_observational_only (true), non_predictive_disclaimer."""
 
-- Región: {region}
-- Intervalo horario: {hour_bucket} UTC
-- Eventos registrados en la hora: {event_count}
-- Media histórica reciente: {mean:.2f} sismos/hora
-- Desviación estándar (σ): {stddev:.2f}
-- Puntuación Z-Score calculada: {z_score:.2f} (Umbral de alerta: {threshold:.1f})
-- Total de horas analizadas: {obs_count}
+PROMPT_DAILY_SUMMARY_V1 = """Eres el analista principal de la Plataforma USGS.
+Total eventos: {total_events}, Magnitud máx: {max_magnitude}, Promedio: {avg_magnitude}, Alertas tsunami: {tsunami_alerts_count}.
+Responde en JSON con title, total_events, max_magnitude, avg_magnitude, tsunami_alerts_count, narrative_overview, regional_activity, tsunami_and_context, non_predictive_note."""
 
-Instrucciones estrictas:
-1. Redacta una explicación concisa (máximo 3 oraciones) describiendo la anomalía en términos de frecuencia observada.
-2. Compara el conteo observado con el promedio histórico reciente.
-3. ADVERTENCIA OBLIGATORIA: Indica explícitamente que este cálculo representa una anomalía estadística de frecuencia observada y NO es una predicción o pronóstico de futuros terremotos.
+T = TypeVar("T", bound=BaseModel)
+
+
+# ==============================================================================
+# Modelos Pydantic para Validación Estructurada
+# ==============================================================================
+class AnomalyStructuredOutput(BaseModel):
+    """Esquema de salida estructurada para explicaciones de anomalías Z-Score."""
+    region: str = Field(..., description="Región geográfica analizada")
+    hour_bucket: str = Field(..., description="Intervalo horario en formato UTC")
+    event_count: int = Field(..., ge=0, description="Cantidad observada de eventos en la hora")
+    z_score: float = Field(..., description="Puntaje Z-Score calculado")
+    explanation: str = Field(..., min_length=15, description="Explicación narrativa de la frecuencia observada")
+    is_observational_only: bool = Field(True, description="Bandera que confirma naturaleza puramente observacional")
+    non_predictive_disclaimer: str = Field(..., min_length=15, description="Advertencia explícita de no predicción")
+
+    def validate_consistency(self, authorized: dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """Verifica que el modelo no haya alterado ni alucinado las cifras precalculadas."""
+        if self.event_count != authorized.get("event_count"):
+            return False, f"Inconsistencia en event_count: modelo dio {self.event_count}, autorizado era {authorized.get('event_count')}"
+
+        auth_zscore = float(authorized.get("z_score", 0.0))
+        if abs(self.z_score - auth_zscore) > 0.05:
+            return False, f"Inconsistencia en z_score: modelo dio {self.z_score}, autorizado era {auth_zscore}"
+
+        # Verificar obligatoriedad de la advertencia de no-predicción
+        combined_text = (self.explanation + " " + self.non_predictive_disclaimer).lower()
+        if "predicci" in combined_text or "pronóstico" in combined_text or "pronostico" in combined_text:
+            if not any(neg in combined_text for neg in ["no es", "no constituye", "no representa", "no predice"]):
+                return False, "La respuesta sugiere falsamente capacidad predictiva de sismos"
+
+        return True, None
+
+
+class DailyReportStructuredOutput(BaseModel):
+    """Esquema de salida estructurada para el informe ejecutivo diario."""
+    title: str = Field(..., description="Título del informe")
+    total_events: int = Field(..., ge=0, description="Total de sismos en las últimas 24h")
+    max_magnitude: float = Field(..., ge=0.0, le=10.0, description="Magnitud máxima registrada")
+    avg_magnitude: float = Field(..., ge=0.0, le=10.0, description="Magnitud promedio")
+    tsunami_alerts_count: int = Field(..., ge=0, description="Alertas de tsunami emitidas")
+    narrative_overview: str = Field(..., min_length=20, description="Resumen de actividad global")
+    regional_activity: str = Field(..., min_length=20, description="Detalle regional y dinámica 12h")
+    tsunami_and_context: str = Field(..., min_length=15, description="Contexto operativo y alertas de tsunami")
+    non_predictive_note: str = Field(..., min_length=15, description="Nota técnica de mediciones históricas")
+
+    def validate_consistency(self, authorized: dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """Verifica la coherencia matemática estricta con las métricas precalculadas."""
+        auth_total = authorized.get("total_events", 0)
+        if self.total_events != auth_total:
+            return False, f"Inconsistencia en total_events: modelo dio {self.total_events}, autorizado era {auth_total}"
+
+        auth_max_ev = authorized.get("max_event") or {}
+        auth_max_mag = float(auth_max_ev.get("magnitude") or 0.0)
+        if abs(self.max_magnitude - auth_max_mag) > 0.1:
+            return False, f"Inconsistencia en max_magnitude: modelo dio {self.max_magnitude}, autorizado era {auth_max_mag}"
+
+        auth_tsunami = authorized.get("tsunami_alerts_count", 0)
+        if self.tsunami_alerts_count != auth_tsunami:
+            return False, f"Inconsistencia en tsunami_alerts_count: modelo dio {self.tsunami_alerts_count}, autorizado era {auth_tsunami}"
+
+        return True, None
+
+    def to_markdown(self) -> str:
+        """Convierte la salida estructurada validada a un reporte en formato Markdown."""
+        return f"""# {self.title}
+**Periodo analizado**: Últimas 24 horas (UTC) | **Fuente**: Capa Gold - USGS Medallion Platform
+**Generación**: Validada mediante Pydantic (IA Local Ollama)
+
+## 1. Panorama General de Actividad
+{self.narrative_overview}
+- **Total de eventos**: {self.total_events}
+- **Magnitud máxima**: M{self.max_magnitude:.1f}
+- **Magnitud promedio**: M{self.avg_magnitude:.2f}
+
+## 2. Regiones y Dinámica Temporal
+{self.regional_activity}
+
+## 3. Estado de Alertas y Contexto Operativo
+{self.tsunami_and_context}
+- **Alertas de tsunami registradas**: {self.tsunami_alerts_count}
+
+---
+*{self.non_predictive_note}*
 """
 
-# Prompt estructurado para el reporte narrativo ejecutivo diario
-PROMPT_DAILY_SUMMARY_V1 = """Eres el analista principal de la Plataforma de Análisis Sísmico USGS.
-A continuación se presentan las métricas analíticas consolidadas de las últimas 24 horas:
 
-- Total de eventos registrados: {total_events}
-- Sismo más potente: Magnitud {max_magnitude} en {max_place} a {max_depth} km de profundidad ({max_time} UTC)
-- Magnitud promedio: {avg_magnitude}
-- Alertas de tsunami emitidas: {tsunami_alerts_count}
-- Regiones más activas: {top_regions_str}
-- Distribución de magnitudes: {distribution_str}
-- Tendencia temporal: {trend_str}
+# ==============================================================================
+# Carga de Plantillas de Prompts Versionados
+# ==============================================================================
+def load_prompt_template(filename: str) -> str:
+    """Carga un archivo de prompt desde el directorio prompts/ o lanza FileNotFound."""
+    prompt_path = PROMPTS_DIR / filename
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8").strip()
 
-Instrucciones:
-1. Redacta un informe ejecutivo estructurado en 3 párrafos:
-   - Párrafo 1: Resumen de la actividad global y evento de mayor intensidad.
-   - Párrafo 2: Zonas geográficas de mayor concentración y tendencia de las últimas 12 horas.
-   - Párrafo 3: Estado de las alertas de tsunami y contexto operativo.
-2. No inventes cifras. Utiliza exclusivamente las métricas provistas.
-3. Menciona que los datos provienen de la capa Gold del USGS Medallion Pipeline.
-"""
+    # Fallback si se ejecuta en contenedor con montaje en /opt/airflow/prompts
+    airflow_path = Path("/opt/airflow/prompts") / filename
+    if airflow_path.exists():
+        return airflow_path.read_text(encoding="utf-8").strip()
+
+    raise FileNotFoundError(f"Archivo de prompt no encontrado: {filename} en {prompt_path}")
 
 
-def format_anomaly_fallback(data: dict[str, Any]) -> str:
-    """Genera una explicación determinista precisa cuando Ollama no está disponible.
+def get_anomaly_prompt_template() -> str:
+    """Obtiene la plantilla de prompt para anomalías desde prompts/anomaly_v1.txt."""
+    try:
+        return load_prompt_template("anomaly_v1.txt")
+    except Exception:
+        # Plantilla segura de respaldo si no se encuentra el archivo
+        return """Eres un asistente analítico especializado en sismología observacional.
+Región: {region}, Intervalo: {hour_bucket} UTC, Eventos: {event_count}, Media: {mean}, Stddev: {stddev}, Z-Score: {z_score}.
+Responde en JSON con region, hour_bucket, event_count, z_score, explanation, is_observational_only (true), non_predictive_disclaimer."""
+
+
+def get_daily_summary_prompt_template() -> str:
+    """Obtiene la plantilla de prompt para reporte diario desde prompts/daily_summary_v1.txt."""
+    try:
+        return load_prompt_template("daily_summary_v1.txt")
+    except Exception:
+        return """Eres el analista principal de la Plataforma USGS.
+Total eventos: {total_events}, Magnitud máx: {max_magnitude}, Promedio: {avg_magnitude}, Alertas tsunami: {tsunami_alerts_count}.
+Responde en JSON con title, total_events, max_magnitude, avg_magnitude, tsunami_alerts_count, narrative_overview, regional_activity, tsunami_and_context, non_predictive_note."""
+
+
+# ==============================================================================
+# Validación y Rechazo de Cifras No Autorizadas
+# ==============================================================================
+def parse_and_validate_json_response(
+    raw_text: str,
+    model_cls: Type[T],
+    authorized_data: dict[str, Any],
+) -> tuple[Optional[T], bool, Optional[str]]:
+    """Extrae JSON, valida esquema con Pydantic y comprueba coherencia de cifras.
     
-    No predice sismos; documenta exclusivamente la desviación matemática observada.
+    Retorna (objeto_validado, es_valido, motivo_error).
     """
+    if not raw_text or not raw_text.strip():
+        return None, False, "Texto de respuesta vacío"
+
+    # Extraer bloque JSON si viene envuelto en markdown ```json ... ```
+    text = raw_text.strip()
+    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not json_match:
+        return None, False, "No se encontró un bloque JSON válido en la respuesta"
+
+    json_str = json_match.group(0)
+
+    try:
+        parsed_dict = json.loads(json_str)
+    except json.JSONDecodeError as err:
+        return None, False, f"JSON sintácticamente inválido: {err}"
+
+    try:
+        validated_obj = model_cls.model_validate(parsed_dict)
+    except ValidationError as val_err:
+        return None, False, f"Fallo de validación Pydantic: {val_err}"
+
+    # Comprobación estricta de coherencia numérica
+    if hasattr(validated_obj, "validate_consistency"):
+        is_consistent, reason = validated_obj.validate_consistency(authorized_data)
+        if not is_consistent:
+            return None, False, f"Rechazo por inconsistencia de cifras: {reason}"
+
+    return validated_obj, True, None
+
+
+# ==============================================================================
+# Fallbacks Deterministas Fidedignos
+# ==============================================================================
+def format_anomaly_fallback(data: dict[str, Any]) -> str:
+    """Genera una explicación determinista precisa cuando Ollama no está disponible o es rechazado."""
     region = data.get("region", "Desconocida")
     hour_bucket = data.get("hour_bucket", "N/A")
     event_count = data.get("event_count", 0)
@@ -84,7 +233,6 @@ def format_daily_report_fallback(metrics: dict[str, Any]) -> str:
     distribution = metrics.get("magnitude_distribution", [])
     trend = metrics.get("trend", {})
 
-    # Formateo de lista de regiones
     regions_lines = []
     for r in top_regions[:5]:
         reg_name = r.get("region", "N/A")
@@ -94,7 +242,6 @@ def format_daily_report_fallback(metrics: dict[str, Any]) -> str:
         regions_lines.append(f"  - **{reg_name}**: {count} sismos (magnitud máxima: {mag_str})")
     regions_text = "\n".join(regions_lines) if regions_lines else "  - Sin actividad regional destacada registrada."
 
-    # Formateo de distribución
     dist_lines = []
     for d in distribution:
         bracket = d.get("magnitude_bracket", "N/A")
@@ -103,7 +250,6 @@ def format_daily_report_fallback(metrics: dict[str, Any]) -> str:
         dist_lines.append(f"  - Rango {bracket}: {c} eventos ({pct:.1f}%)")
     dist_text = "\n".join(dist_lines) if dist_lines else "  - Distribución no disponible."
 
-    # Tendencia horaria
     h1_count = trend.get("first_12h_count", 0)
     h2_count = trend.get("last_12h_count", 0)
     trend_desc = trend.get("direction", "estable")
