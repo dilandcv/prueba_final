@@ -88,3 +88,4 @@ def root_redirect():
         "health": "/api/v1/health",
         "version": "1.0.0",
     }
+#kanye es the GOAT
