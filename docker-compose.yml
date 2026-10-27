@@ -15,6 +15,7 @@ networks:
 volumes:
   postgres_data:
   ollama_data:
+  elasticsearch_data:
 
 services:
   # ----------------------------------------------------------------------------
@@ -231,5 +232,129 @@ services:
       - ollama_data:/root/.ollama
     entrypoint: /bin/sh
     command: -c "echo 'Descargando modelo local en Ollama...' && ollama pull $${OLLAMA_MODEL:-llama3.2:1b} && echo 'Modelo listo para inferir.'"
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # OpenMetadata: Motor de Búsqueda (Elasticsearch)
+  # ----------------------------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: seismic_elasticsearch
+    restart: unless-stopped
+    profiles: ["metadata"]
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+    networks:
+      - seismic_net
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE 'green|yellow' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+  # ----------------------------------------------------------------------------
+  # OpenMetadata: Migración de Esquema (Bootstrap)
+  # ----------------------------------------------------------------------------
+  openmetadata-migrate:
+    image: docker.getcollate.io/openmetadata/server:1.5.12
+    container_name: seismic_openmetadata_migrate
+    restart: "no"
+    profiles: ["metadata"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    environment:
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres_admin
+      DB_USER_PASSWORD: ${POSTGRES_PASSWORD:-postgres_example_password}
+      OM_DATABASE: openmetadata_db
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: elasticsearch
+      MIGRATION_LIMIT_PARAM: 1200
+    networks:
+      - seismic_net
+
+  # ----------------------------------------------------------------------------
+  # OpenMetadata: Servidor y Catálogo de Datos (UI y REST API)
+  # ----------------------------------------------------------------------------
+  openmetadata-server:
+    image: docker.getcollate.io/openmetadata/server:1.5.12
+    container_name: seismic_openmetadata_server
+    restart: unless-stopped
+    profiles: ["metadata"]
+    depends_on:
+      openmetadata-migrate:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "8585:8585"
+      - "8586:8586"
+    environment:
+      OPENMETADATA_CLUSTER_NAME: ${OPENMETADATA_CLUSTER_NAME:-seismic-openmetadata}
+      SERVER_PORT: 8585
+      SERVER_ADMIN_PORT: 8586
+      SERVER_JAVA_OPTS: "-Xms512m -Xmx1024m"
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres_admin
+      DB_USER_PASSWORD: ${POSTGRES_PASSWORD:-postgres_example_password}
+      OM_DATABASE: openmetadata_db
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: elasticsearch
+      AUTHENTICATION_PROVIDER: basic
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: true
+      PIPELINE_SERVICE_CLIENT_ENABLED: false
+    networks:
+      - seismic_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8585/api/v1/system/version || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ----------------------------------------------------------------------------
+  # OpenMetadata: Ingesta Automatizada de Metadatos
+  # ----------------------------------------------------------------------------
+  openmetadata-ingestion:
+    image: python:3.11-slim
+    container_name: seismic_openmetadata_ingestion
+    restart: "no"
+    profiles: ["metadata"]
+    depends_on:
+      openmetadata-server:
+        condition: service_healthy
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-seismic_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_example_password}
+      OPENMETADATA_SERVER_URL: http://openmetadata-server:8585
+    command: >
+      bash -c "pip install --no-cache-dir httpx &&
+               python -m src.metadata.service"
     networks:
       - seismic_net

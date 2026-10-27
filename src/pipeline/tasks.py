@@ -443,3 +443,19 @@ def generate_and_persist_daily_report_task(ti: Any = None) -> dict[str, Any]:
             pass
 
     return run_daily_executive_report(airflow_run_id=airflow_run_id)
+
+
+# ==============================================================================
+# 11. Sincronización de Catálogo y Linaje con OpenMetadata (Fase 11)
+# ==============================================================================
+def sync_metadata_task(ti: Any = None) -> dict[str, Any]:
+    """Tarea de mejor esfuerzo: sincroniza esquemas, tablas y linaje con OpenMetadata."""
+    from src.metadata.service import sync_metadata_catalog
+
+    try:
+        return sync_metadata_catalog()
+    except Exception as exc:
+        logger.warning(
+            "Sincronización con OpenMetadata omitida de forma no bloqueante: %s", exc
+        )
+        return {"status": "SKIPPED", "reason": str(exc)}

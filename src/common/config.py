@@ -49,6 +49,18 @@ def _resolve_ollama_base_url() -> str:
     return configured_url
 
 
+def _resolve_openmetadata_server_url() -> str:
+    """Resuelve la URL de OpenMetadata según se ejecute en contenedor Docker o host local."""
+    configured_url = os.getenv("OPENMETADATA_SERVER_URL", "http://openmetadata-server:8585")
+    if "openmetadata-server" in configured_url:
+        try:
+            socket.gethostbyname("openmetadata-server")
+            return configured_url
+        except (socket.gaierror, OSError):
+            return "http://localhost:8585"
+    return configured_url
+
+
 @dataclass(frozen=True)
 class DatabaseSettings:
     host: str = field(default_factory=lambda: _resolve_db_host_port()[0])
@@ -101,12 +113,19 @@ class AISettings:
 
 
 @dataclass(frozen=True)
+class OpenMetadataSettings:
+    server_url: str = field(default_factory=_resolve_openmetadata_server_url)
+    jwt_token: str = field(default_factory=lambda: os.getenv("OPENMETADATA_JWT_TOKEN", ""))
+
+
+@dataclass(frozen=True)
 class Settings:
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
     usgs: USGSSettings = field(default_factory=USGSSettings)
     spark: SparkSettings = field(default_factory=SparkSettings)
     api: APISettings = field(default_factory=APISettings)
     ai: AISettings = field(default_factory=AISettings)
+    metadata: OpenMetadataSettings = field(default_factory=OpenMetadataSettings)
 
 
 def get_settings() -> Settings:
