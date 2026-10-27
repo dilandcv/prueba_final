@@ -1,6 +1,7 @@
 """Configuración centralizada de la plataforma cargada desde variables de entorno."""
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,11 @@ class SparkSettings:
     master: str = field(default_factory=lambda: os.getenv("SPARK_MASTER", "local[*]"))
     driver_memory: str = field(default_factory=lambda: os.getenv("SPARK_DRIVER_MEMORY", "1g"))
     shuffle_partitions: int = field(default_factory=lambda: int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "4")))
+    jar_path: str = field(default_factory=lambda: os.getenv(
+        "SPARK_JDBC_JAR",
+        "/opt/airflow/jars/postgresql-42.7.3.jar" if os.path.exists("/opt/airflow/jars/postgresql-42.7.3.jar")
+        else str(Path(__file__).resolve().parent.parent.parent / "jars" / "postgresql-42.7.3.jar")
+    ))
 
 
 @dataclass(frozen=True)
