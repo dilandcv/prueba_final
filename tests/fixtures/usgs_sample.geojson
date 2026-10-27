@@ -1,0 +1,85 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1729000000000,
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson",
+    "title": "USGS Earthquakes Mock Sample",
+    "status": 200,
+    "api": "1.14.0",
+    "count": 2
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 4.5,
+        "place": "35 km SSE of Whites City, New Mexico",
+        "time": 1728990000000,
+        "updated": 1728995000000,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/tx2024abcd",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=tx2024abcd&format=geojson",
+        "felt": 12,
+        "cdi": 3.8,
+        "mmi": 4.1,
+        "alert": "green",
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 312,
+        "net": "tx",
+        "code": "2024abcd",
+        "ids": ",tx2024abcd,",
+        "sources": ",tx,",
+        "types": ",origin,phase-data,",
+        "nst": 24,
+        "dmin": 0.12,
+        "rms": 0.18,
+        "gap": 45,
+        "magType": "ml",
+        "type": "earthquake",
+        "title": "M 4.5 - 35 km SSE of Whites City, New Mexico"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-104.25, 31.85, 6.4]
+      },
+      "id": "tx2024abcd"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 3.1,
+        "place": "14 km NE of Ridgecrest, CA",
+        "time": 1728991000000,
+        "updated": 1728996000000,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/ci40123456",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=ci40123456&format=geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "automatic",
+        "tsunami": 0,
+        "sig": 148,
+        "net": "ci",
+        "code": "40123456",
+        "ids": ",ci40123456,",
+        "sources": ",ci,",
+        "types": ",origin,phase-data,",
+        "nst": 18,
+        "dmin": 0.08,
+        "rms": 0.15,
+        "gap": 50,
+        "magType": "md",
+        "type": "earthquake",
+        "title": "M 3.1 - 14 km NE of Ridgecrest, CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-117.58, 35.72, 4.8]
+      },
+      "id": "ci40123456"
+    }
+  ]
+}

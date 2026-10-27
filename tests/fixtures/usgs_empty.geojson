@@ -1,0 +1,12 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1729000000000,
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson",
+    "title": "USGS Empty",
+    "status": 200,
+    "api": "1.14.0",
+    "count": 0
+  },
+  "features": []
+}
