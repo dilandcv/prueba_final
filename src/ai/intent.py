@@ -135,12 +135,14 @@ def classify_intent(
 
     # 6. Resolución de Preguntas de Seguimiento Conversacional
     context_inherited: dict[str, Any] = {}
+    is_follow_up = False
     if history:
         prev_user_msgs = [h.get("content", "").lower() for h in history if h.get("role") == "user"]
         last_user_msg = prev_user_msgs[-1] if prev_user_msgs else ""
 
         # ¿Hereda intervalo de tiempo previo?
-        if any(f in q_lower for f in ["¿y cuántos", "y cuantos", "cuántos de esos", "superaron magnitud"]):
+        if any(f in q_lower for f in ["¿y cuántos", "y cuantos", "cuántos de esos", "cuantos de esos", "superaron magnitud"]):
+            is_follow_up = True
             prev_start, prev_end = parse_time_window(last_user_msg)
             if prev_start and prev_end:
                 context_inherited["start_time"] = prev_start
@@ -153,18 +155,21 @@ def classify_intent(
                 context_inherited["end_time"] = datetime.now(timezone.utc)
 
         # ¿Hereda región previa?
-        if any(f in q_lower for f in ["en esa misma región", "en esa region", "en ese lugar"]):
+        if any(f in q_lower for f in ["en esa misma región", "en esa region", "en ese lugar", "en esa zona", "allí", "alli"]):
+            is_follow_up = True
             prev_region = extract_region(last_user_msg) or (state.last_region if state else None)
             if prev_region:
                 context_inherited["region"] = prev_region
 
         # ¿Pregunta por profundidad/lugar del sismo mayor anterior?
-        if any(f in q_lower for f in ["a qué profundidad", "en qué lugar exacto", "donde ocurrio"]):
+        if any(f in q_lower for f in ["a qué profundidad", "a que profundidad", "en qué lugar exacto", "en que lugar exacto", "donde ocurrio", "dónde ocurrió"]):
+            is_follow_up = True
             return IntentResult(
                 intent="CONSULTA_SISMICA",
                 tools=["get_strongest_earthquake"],
                 start_time=datetime.now(timezone.utc) - timedelta(hours=24),
                 end_time=datetime.now(timezone.utc),
+                query=q_raw,
             )
 
     # 7. Documentación Técnica y Arquitectura
@@ -207,50 +212,46 @@ def classify_intent(
             period2_end=p2_end,
             min_magnitude=extract_min_magnitude(q_lower),
             region=extract_region(q_lower),
+            query=q_raw,
         )
 
     # Distribución por magnitud
     if any(k in q_lower for k in ["distribuyen", "distribución", "distribucion", "rangos de magnitud"]):
         start_t, end_t = parse_time_window(q_lower)
-        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_magnitude_distribution"], start_time=start_t, end_time=end_t)
+        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_magnitude_distribution"], start_time=start_t, end_time=end_t, query=q_raw)
 
     # Anomalías Z-Score
     if any(k in q_lower for k in ["anomalía", "anomalia", "anomalías", "anomalias", "z-score", "zscore", "atípico"]):
-        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_anomaly_alerts"])
+        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_anomaly_alerts"], query=q_raw)
 
     # Calidad de datos
     if any(k in q_lower for k in ["puntaje de calidad", "calidad de los datos", "registros válidos", "descartados", "failed_rules"]):
-        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_data_quality_metrics"])
-
-    # Últimos sismos cronológicos
-    if any(k in q_lower for k in ["últimos sismos", "ultimos sismos", "últimos 5 sismos", "ultimos 5 sismos", "recientes"]):
-        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_latest_earthquakes"], min_magnitude=extract_min_magnitude(q_lower), region=extract_region(q_lower))
+        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_data_quality_metrics"], query=q_raw)
 
     # Sismo más potente o más profundo
     if any(k in q_lower for k in ["mayor magnitud", "más fuerte", "mas fuerte", "máximo", "maximo", "más grande", "más profundo", "mas profundo", "profundidad"]):
         start_t, end_t = parse_time_window(q_lower)
-        if not start_t:
-            start_t = datetime.now(timezone.utc) - timedelta(hours=24)
-            end_t = datetime.now(timezone.utc)
-        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_strongest_earthquake"], start_time=start_t, end_time=end_t, region=extract_region(q_lower))
+        reg = extract_region(q_lower) or (context_inherited.get("region") if is_follow_up else None)
+        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_strongest_earthquake"], start_time=start_t, end_time=end_t, region=reg, query=q_raw)
+
+    # Últimos sismos cronológicos
+    if any(k in q_lower for k in ["últimos sismos", "ultimos sismos", "últimos 5 sismos", "ultimos 5 sismos", "más reciente", "mas reciente", "recientes", "reciente", "últimos eventos", "ultimos eventos", "eventos recientes"]):
+        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_latest_earthquakes"], min_magnitude=extract_min_magnitude(q_lower), region=extract_region(q_lower), query=q_raw)
 
     # Regiones más activas o consulta específica de región
     if any(k in q_lower for k in ["región", "region", "regiones", "ranking regional", "top 3", "mayor actividad"]) or extract_region(q_lower):
         start_t, end_t = parse_time_window(q_lower)
-        if not start_t:
-            start_t = datetime.now(timezone.utc) - timedelta(hours=24)
-            end_t = datetime.now(timezone.utc)
-        reg = extract_region(q_lower) or context_inherited.get("region") or (state.last_region if state else None)
-        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_earthquakes_by_region"], start_time=start_t, end_time=end_t, region=reg)
+        reg = extract_region(q_lower) or context_inherited.get("region")
+        return IntentResult(intent="CONSULTA_SISMICA", tools=["get_earthquakes_by_region"], start_time=start_t, end_time=end_t, region=reg, query=q_raw)
 
     # Conteo general / Estadísticas de sismos
     start_t, end_t = parse_time_window(q_lower)
-    if not start_t:
-        start_t = context_inherited.get("start_time") or (state.last_start_time if state else None) or (datetime.now(timezone.utc) - timedelta(hours=24))
-        end_t = context_inherited.get("end_time") or (state.last_end_time if state else None) or datetime.now(timezone.utc)
+    if not start_t and is_follow_up:
+        start_t = context_inherited.get("start_time")
+        end_t = context_inherited.get("end_time")
 
     min_mag = extract_min_magnitude(q_lower)
-    reg = extract_region(q_lower) or context_inherited.get("region") or (state.last_region if state else None)
+    reg = extract_region(q_lower) or (context_inherited.get("region") if is_follow_up else None)
 
     return IntentResult(
         intent="CONSULTA_SISMICA",
@@ -259,4 +260,5 @@ def classify_intent(
         end_time=end_t,
         min_magnitude=min_mag,
         region=reg,
+        query=q_raw,
     )

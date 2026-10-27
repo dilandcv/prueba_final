@@ -121,26 +121,33 @@ def search_project_documentation(cur, query: str, limit: int = 4) -> list[dict[s
             "relevance": float(r[4]),
         })
 
-    # 2. Si FTS no arrojó resultados (ej. palabras técnicas en inglés como 'spark', 'fastapi', 'airflow'):
+    # 3. Respaldo directo en archivos locales si la base de datos aún no ha indexado ops.project_documents:
     if not results:
-        terms = [t for t in re.split(r"\W+", clean_query) if len(t) > 3]
-        if terms:
-            like_clauses = " OR ".join(["content ILIKE %s" for _ in terms])
-            like_params = [f"%{t}%" for t in terms]
-            fallback_sql = f"""
-                SELECT doc_name, section_title, file_path, content, 0.5 AS rank
-                FROM ops.project_documents
-                WHERE {like_clauses}
-                LIMIT %s;
-            """
-            cur.execute(fallback_sql, (*like_params, limit))
-            for r in cur.fetchall():
-                results.append({
-                    "doc_name": r[0],
-                    "section_title": r[1],
-                    "file_path": r[2],
-                    "content": r[3],
-                    "relevance": float(r[4]),
-                })
+        all_chunks = []
+        for doc_name, path in DOC_SOURCES:
+            all_chunks.extend(chunk_markdown_file(doc_name, path))
+        raw_terms = [t.lower() for t in re.split(r"\W+", clean_query) if len(t) >= 3 and t.lower() not in stopwords]
+        terms = set(raw_terms)
+        for t in list(terms):
+            if "medall" in t:
+                terms.update(["medallon", "medallón", "medallion"])
+        scored_chunks = []
+        for ch in all_chunks:
+            t_lower = ch["section_title"].lower()
+            b_lower = ch["content"].lower()
+            score = sum(5 for t in terms if t in t_lower) + sum(1 for t in terms if t in b_lower)
+            if score > 0:
+                scored_chunks.append((score, ch))
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        top_score = scored_chunks[0][0] if scored_chunks else 0
+        filtered_chunks = [ch for s, ch in scored_chunks if s >= top_score * 0.4]
+        for ch in filtered_chunks[:limit]:
+            results.append({
+                "doc_name": ch["doc_name"],
+                "section_title": ch["section_title"],
+                "file_path": ch["file_path"],
+                "content": ch["content"],
+                "relevance": 1.0,
+            })
 
     return results

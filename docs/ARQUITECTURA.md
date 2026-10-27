@@ -31,7 +31,8 @@ flowchart TD
     GOLD -->|ai_reader (Herramientas)| AGENT["Agente Conversacional IA\n(Herramientas + RAG + Verificador)"]
     DOCS[("Documentación Técnica\n(docs/*.md)")] -->|Búsqueda BM25| AGENT
     AGENT --> TRACES[("ops.ai_agent_traces")]
-    AGENT <-->|Inferencia Local / Fallback| AI_MODULE
+    AGENT -->|Inferencia / Fallback| AI_MODULE
+    AI_MODULE -->|Respuesta Validada| AGENT
 
     GOLD -->|api_reader| FASTAPI["Backend FastAPI"]
     AGENT --> FASTAPI
@@ -41,19 +42,43 @@ flowchart TD
 
 ---
 
-## 2. Spark en este proyecto
+## 2. Arquitectura Medallion (Bronze, Silver, Gold)
+
+El sistema organiza el flujo de datos en tres capas Medallion procesadas exclusivamente con Apache Spark (PySpark):
+- **Capa Bronze (Crudo)**: Almacenamiento append-only en `bronze.earthquakes` del JSONB original obtenido de la API del USGS sin transformaciones intermedias.
+- **Capa Silver (Validado & Deduplicado)**: PySpark parsea el JSON con tipado estricto, realiza la **validación** de 5 reglas de calidad de datos en memoria y la **deduplicación** por `event_id` mediante Apache **Spark**, efectuando un upsert atómico en `silver.earthquakes`.
+- **Capa Gold (Agregaciones & Analítica)**: PySpark calcula agregaciones horarias, métricas espaciales por región y rankings analíticos en `gold.*`.
+
+---
+
+## 3. Spark en este proyecto
 
 ### ¿Qué es Spark y qué problema resuelve?
 Apache Spark es un motor de computación unificado de código abierto diseñado para el procesamiento y transformación distribuida de datos en memoria. A diferencia de soluciones tradicionales que leen y escriben en disco en cada paso intermedio, Spark mantiene los conjuntos de datos en memoria RAM estructurada, acelerando de 10 a 100 veces el procesamiento de transformaciones complejas, agregaciones y uniones.
 
+### ¿Por qué no se utiliza pandas en el pipeline y qué motor se usa en su lugar?
+En este proyecto está expresamente prohibido el uso de **pandas**, Polars o Dask en el pipeline de datos. En su lugar, el motor de procesamiento unificado es **Apache Spark** (**PySpark**). Las razones fundamentales son:
+1. **Escalabilidad y procesamiento distribuido**: A diferencia de **pandas**, que opera en memoria en un solo proceso y falla ante grandes volúmenes (*OOM*), **PySpark** escala horizontalmente particionando el cómputo.
+2. **Evaluación perezosa y optimización Catalyst**: Spark optimiza el plan de ejecución lógica y física antes de ejecutar acciones en el clúster.
+3. **Idempotencia y estándares empresariales**: Permite procesar lotes masivos de manera transaccional e idempotente conectándose por JDBC a PostgreSQL.
+
 ### Rol de Spark en cada paso del pipeline
 1. **Bronze → Silver**:
    - Lee los datos crudos en JSONB desde PostgreSQL por JDBC (`payload::text`).
-   - Parsea el JSON mediante `from_json` con un esquema explícito y tipado estricto.
-   - Aplica validaciones de calidad de datos mediante expresiones de columna (`filter`, `when`).
+   - Parsea el JSON mediante `from_json` con un esquema explícito y tipado estricto en Apache **Spark**.
+   - Aplica la **validación** estricta de 5 reglas de calidad de datos mediante expresiones de columna (`filter`, `when`).
    - Descarta los registros que infringen reglas de negocio y calcula los contadores de rechazo para `metrics.data_quality`.
-   - Deduplica por `event_id` conservando la versión con el `source_updated_at` más reciente.
+   - Realiza la **deduplicación** por `event_id` conservando la versión con el `source_updated_at` más reciente.
    - Escribe en la tabla de staging para el posterior upsert atómico en `silver.earthquakes`.
+
+   **Reglas de Calidad de Datos validadas antes de cargar en Silver:**
+   PySpark aplica 5 reglas de validación en memoria:
+   - **Identificador (`rule_id_not_null`)**: `event_id` presente, no nulo y no vacío.
+   - **Magnitud admisible (`rule_magnitude_valid`)**: Magnitud numérica admisible entre -2.0 y 10.0.
+   - **Fecha válida (`rule_time_valid`)**: `time_utc` no nulo y fecha no futura (menor o igual a la actual).
+   - **Coordenadas terrestres (`rule_coordinates_valid`)**: Coordenadas geográficas admisibles (latitud entre -90 y 90, longitud entre -180 y 180).
+   - **Alerta de tsunami (`rule_tsunami_valid`)**: Indicador booleano de tsunami válido y no nulo.
+
 2. **Silver → Gold**:
    - Lee `silver.earthquakes` por JDBC.
    - Calcula métricas horarias y agregados espaciales (`groupBy("region", "hour_bucket")`).

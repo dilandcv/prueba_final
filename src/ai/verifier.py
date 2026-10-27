@@ -7,6 +7,7 @@ def format_verified_response(
     tool_name: Optional[str],
     tool_data: Any,
     rejection_reason: Optional[str] = None,
+    query: Optional[str] = None,
 ) -> str:
     """Genera una respuesta verificada basada exclusivamente en los datos reales devueltos por la herramienta."""
     if intent == "FUERA_DE_DOMINIO":
@@ -55,23 +56,40 @@ def format_verified_response(
         )
 
     if tool_name == "get_earthquake_statistics":
-        total = tool_data.get("total_events", 0)
-        avg_m = tool_data.get("avg_magnitude", 0.0)
-        max_m = tool_data.get("max_magnitude", 0.0)
-        tsunami = tool_data.get("tsunami_alerts_count", 0)
+        total = tool_data.get("total_events", 0) if tool_data else 0
+        avg_m = tool_data.get("avg_magnitude", 0.0) if tool_data else 0.0
+        max_m = tool_data.get("max_magnitude", 0.0) if tool_data else 0.0
+        tsunami = tool_data.get("tsunami_alerts_count", 0) if tool_data else 0
 
         filter_str = ""
-        if tool_data.get("min_magnitude"):
+        if tool_data and tool_data.get("min_magnitude"):
             if tool_data["min_magnitude"] == 4.0:
                 filter_str += " con magnitud 4 o superior"
             else:
                 filter_str += f" con magnitud mayor o igual a {tool_data['min_magnitude']}"
-        if tool_data.get("region"):
+        if tool_data and tool_data.get("region"):
             filter_str += f" en la región de {tool_data['region']}"
 
         if total == 0:
             return f"No se dispone de registros o se contabilizaron **0 sismos**{filter_str} para el intervalo especificado."
 
+        q_clean = (query or "").lower()
+
+        # Respuesta específica si el usuario preguntó por alertas de tsunami
+        if any(w in q_clean for w in ["tsunami", "alerta de tsunami", "alertas de tsunami"]) and not any(w in q_clean for w in ["resumen", "todas"]):
+            return (
+                f"Durante el período analizado se registraron **{tsunami}** alertas de tsunami en la plataforma "
+                f"(evaluadas sobre un total de **{total} sismos** en días evaluados)."
+            )
+
+        # Respuesta específica si el usuario preguntó por magnitud promedio
+        if any(w in q_clean for w in ["promedio", "media"]) and not any(w in q_clean for w in ["resumen", "todas"]):
+            return (
+                f"El promedio de magnitud registrado es de **M{avg_m:.2f}**, sobre un total de **{total} sismos** "
+                f"evaluados en la capa Gold durante el período analizado de días evaluados."
+            )
+
+        # Respuesta para resumen o consulta general
         return (
             f"Resumen de actividad: Durante el período analizado de días evaluados se registraron **{total} sismos** (eventos sísmicos){filter_str} en la capa Gold, "
             f"con un promedio de magnitud de **M{avg_m:.2f}**, una magnitud máxima de **M{max_m}** "
@@ -157,22 +175,24 @@ def build_deterministic_synthesis(intent_res: Any, tool_results: dict[str, Any])
     intent = getattr(intent_res, "intent", "DESCONOCIDO")
     rejection = getattr(intent_res, "rejection_reason", None)
     tools = getattr(intent_res, "tools", [])
+    query = getattr(intent_res, "query", "")
 
     if not tools or intent in ("FUERA_DE_DOMINIO", "CONSULTA_AMBIGUA", "INFORMACION_NO_DISPONIBLE", "ERROR_DE_HERRAMIENTA"):
-        return format_verified_response(intent, None, None, rejection)
+        return format_verified_response(intent, None, None, rejection, query=query)
 
     primary_tool = tools[0]
     data = tool_results.get(primary_tool)
-    return format_verified_response(intent, primary_tool, data, rejection)
+    return format_verified_response(intent, primary_tool, data, rejection, query=query)
 
 
 def verify_response_consistency(
     text: str,
     tool_results: dict[str, Any],
     intent: str,
+    previous_response: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
-    """Verifica que la respuesta no contenga afirmaciones predictivas ni evasiones por corte de entrenamiento."""
-    lower = text.lower()
+    """Verifica que la respuesta no contenga afirmaciones predictivas, evasiones ni repeticiones de turnos anteriores."""
+    lower = text.lower().strip()
     predictive_claims = ["habrá un terremoto confirmado", "terremoto ocurrirá con certeza"]
     for claim in predictive_claims:
         if claim in lower:
@@ -188,6 +208,12 @@ def verify_response_consistency(
     for evasion in evasion_patterns:
         if evasion in lower:
             return False, f"Evasión por corte temporal detectada: '{evasion}'"
+
+    # Verificación anti-repetición: evitar que el modelo responda lo mismo dos veces
+    if previous_response:
+        prev_lower = previous_response.lower().strip()
+        if lower == prev_lower or (len(lower) > 30 and lower in prev_lower):
+            return False, "Repetición exacta de respuesta previa detectada"
 
     return True, None
 

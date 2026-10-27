@@ -49,6 +49,7 @@ def sync_metadata_catalog(client: Optional[OpenMetadataClient] = None) -> dict[s
         host_port=host_port,
         username=settings.db.user,
         database=settings.db.name,
+        password=settings.db.password,
     )
 
     # 3. Registrar Base de Datos

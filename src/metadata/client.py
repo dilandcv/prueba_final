@@ -1,5 +1,6 @@
 """Cliente HTTP para la API REST de OpenMetadata v1 con autenticación y manejo no bloqueante."""
 import logging
+import re
 from typing import Any, Optional
 
 import httpx
@@ -76,21 +77,26 @@ class OpenMetadataClient:
         host_port: str,
         username: str,
         database: str,
+        password: Optional[str] = None,
         description: str = "Servicio PostgreSQL del Almacén Sísmico Medallón",
     ) -> Optional[dict[str, Any]]:
         """Registra el servicio de base de datos PostgreSQL en OpenMetadata."""
         url = f"{self.api_url}/services/databaseServices"
+        config: dict[str, Any] = {
+            "type": "Postgres",
+            "hostPort": host_port,
+            "username": username,
+            "database": database,
+        }
+        if password:
+            config["authType"] = {"password": password}
+
         payload = {
             "name": name,
             "serviceType": "Postgres",
             "description": description,
             "connection": {
-                "config": {
-                    "type": "Postgres",
-                    "hostPort": host_port,
-                    "username": username,
-                    "database": database,
-                }
+                "config": config
             },
         }
         try:
@@ -159,10 +165,10 @@ class OpenMetadataClient:
         for col in columns:
             col_type = col.get("type", "VARCHAR").upper()
             dataType = "VARCHAR"
-            if "INT" in col_type:
-                dataType = "INT"
-            elif "BIGINT" in col_type:
+            if "BIGINT" in col_type:
                 dataType = "BIGINT"
+            elif "INT" in col_type:
+                dataType = "INT"
             elif "NUMERIC" in col_type or "FLOAT" in col_type or "DOUBLE" in col_type:
                 dataType = "NUMERIC"
             elif "BOOL" in col_type:
@@ -174,11 +180,17 @@ class OpenMetadataClient:
             elif "UUID" in col_type:
                 dataType = "UUID"
 
-            om_columns.append({
+            col_def: dict[str, Any] = {
                 "name": col["name"],
                 "dataType": dataType,
                 "description": col.get("description", ""),
-            })
+            }
+
+            if dataType in ("VARCHAR", "CHAR", "BINARY", "VARBINARY"):
+                match = re.search(r"\((\d+)\)", col_type)
+                col_def["dataLength"] = int(match.group(1)) if match else 255
+
+            om_columns.append(col_def)
 
         payload: dict[str, Any] = {
             "name": table_name,

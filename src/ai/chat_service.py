@@ -215,24 +215,18 @@ def process_chat_message(
                 "4. Responde de manera directa, clara y concisa en una o dos oraciones."
             )
 
+            last_asst_msg: Optional[str] = None
+            if history:
+                prev_assts = [h.content for h in history if h.role == "assistant"]
+                if prev_assts:
+                    last_asst_msg = prev_assts[-1]
+
             user_prompt = (
                 f"Información verificada: {deterministic_synthesis}\n\n"
                 f"Consulta del usuario: {clean_msg}\n\n"
                 "Redacta una respuesta concisa, profesional y fluida en español para el usuario "
                 "basándote exclusivamente en la información verificada anterior:"
             )
-            if history:
-                recent_history = history[-4:]
-                hist_lines = []
-                for h in recent_history:
-                    role_label = "Usuario" if h.role == "user" else "Asistente"
-                    hist_lines.append(f"{role_label}: {h.content}")
-                user_prompt = (
-                    f"Información verificada: {deterministic_synthesis}\n\n"
-                    f"Historial previo:\n" + "\n".join(hist_lines) + f"\n\nConsulta del usuario: {clean_msg}\n\n"
-                    "Redacta una respuesta concisa, profesional y fluida en español para el usuario "
-                    "basándote exclusivamente en la información verificada anterior:"
-                )
 
             client = OllamaClient()
             ai_res = client.generate(
@@ -243,7 +237,12 @@ def process_chat_message(
             )
 
             if not ai_res.used_fallback and ai_res.text:
-                is_valid, violation = verify_response_consistency(ai_res.text, tool_results, intent_res.intent)
+                is_valid, violation = verify_response_consistency(
+                    ai_res.text,
+                    tool_results,
+                    intent_res.intent,
+                    previous_response=last_asst_msg,
+                )
                 if is_valid:
                     final_text = ai_res.text
                     if intent_res.intent == "CONSULTA_DOCUMENTACION" and "Fuente:" not in final_text and "Fuente" not in final_text:

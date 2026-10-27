@@ -10,11 +10,11 @@ El sistema implementa una arquitectura medallón basada en tres capas en Postgre
 
 ```mermaid
 flowchart TD
-    USGS["API Pública USGS\n(GeoJSON)"] -->|Extracción Incremental| INGEST["Servicio Ingesta Python\n(src.ingestion.service)"]
-    INGEST -->|Append-Only JSONB| BRONZE[("PostgreSQL: Capa Bronze\n(bronze.earthquakes)")]
+    USGS["API Pública USGS<br/>(GeoJSON)"] -->|Extracción Incremental| INGEST["Servicio Ingesta Python<br/>(src.ingestion.service)"]
+    INGEST -->|Append-Only JSONB| BRONZE[("PostgreSQL: Capa Bronze<br/>(bronze.earthquakes)")]
 
     subgraph Airflow["Contenedor Airflow (Java 17 + PySpark)"]
-        DAG["DAG usgs_seismic_pipeline\n(cada 15 min)"]
+        DAG["DAG usgs_seismic_pipeline<br/>(cada 15 min)"]
         DAG --> T1["Task: extract_and_load_bronze"]
         DAG --> T2["Task: spark_bronze_to_silver"]
         DAG --> T3["Task: spark_silver_to_gold"]
@@ -23,24 +23,25 @@ flowchart TD
     end
 
     BRONZE -->|JDBC Read| T2
-    T2 -->|Validación & Deduplicación| SILVER[("PostgreSQL: Capa Silver\n(silver.earthquakes)")]
+    T2 -->|Validación & Deduplicación| SILVER[("PostgreSQL: Capa Silver<br/>(silver.earthquakes)")]
     T2 -->|Métricas de Calidad| METRICS[("metrics.data_quality")]
 
     SILVER -->|JDBC Read| T3
-    T3 -->|Agregaciones Horarias & Rankings| GOLD[("PostgreSQL: Capa Gold\n(gold.*)")]
+    T3 -->|Agregaciones Horarias & Rankings| GOLD[("PostgreSQL: Capa Gold<br/>(gold.*)")]
 
-    GOLD -->|ai_reader (Solo Lectura)| AI_MOD["Módulo IA Local\n(Ollama llama3.2:1b + Fallback)"]
+    GOLD -->|ai_reader (Solo Lectura)| AI_MOD["Módulo IA Local<br/>(Ollama llama3.2:1b + Fallback)"]
     AI_MOD --> OPS[("ops.anomaly_alerts & ai_executions")]
 
-    GOLD -->|ai_reader (Herramientas Analíticas)| CHAT["Agente IA Conversacional\n(Herramientas + RAG + Verificación)"]
-    DOCS[("Documentación Técnica\n(docs/*.md)")] -->|RAG BM25| CHAT
+    GOLD -->|ai_reader (Herramientas Analíticas)| CHAT["Agente IA Conversacional<br/>(Herramientas + RAG + Verificación)"]
+    DOCS[("Documentación Técnica<br/>(docs/*.md)")] -->|RAG BM25| CHAT
     CHAT --> TRACES[("ops.ai_agent_traces")]
-    CHAT <-->|Inferencia Local / Fallback| AI_MOD
+    CHAT -->|Inferencia / Fallback| AI_MOD
+    AI_MOD -->|Respuesta Validada| CHAT
 
-    GOLD -->|api_reader (Solo Lectura)| API["FastAPI Backend\n(Puerto 8000)"]
+    GOLD -->|api_reader (Solo Lectura)| API["FastAPI Backend<br/>(Puerto 8000)"]
     CHAT --> API
     T5 -.->|Notificación SSE| API
-    API -->|REST + SSE| DASHBOARD["Dashboard Web React\n(Leaflet + Chatbot + Tailwind, Puerto 3000)"]
+    API -->|REST + SSE| DASHBOARD["Dashboard Web React<br/>(Leaflet + Chatbot + Tailwind, Puerto 3000)"]
 ```
 
 > [!IMPORTANT]
