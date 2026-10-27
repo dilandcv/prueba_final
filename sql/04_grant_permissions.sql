@@ -56,6 +56,7 @@ REVOKE ALL ON SCHEMA bronze, silver, metrics FROM ai_reader;
 
 GRANT USAGE ON SCHEMA gold, ops TO ai_reader;
 
+GRANT SELECT ON gold.earthquakes TO ai_reader;
 GRANT SELECT ON gold.hourly_regional_stats TO ai_reader;
 GRANT SELECT ON gold.regional_ranking TO ai_reader;
 GRANT SELECT ON gold.magnitude_distribution TO ai_reader;

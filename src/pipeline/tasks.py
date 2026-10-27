@@ -390,3 +390,56 @@ def publish_data_availability_task(
         "records_processed": count,
         "status": "AVAILABLE",
     }
+
+
+# ==============================================================================
+# 9. Detección de Anomalías Z-Score (Automatización B)
+# ==============================================================================
+def run_anomaly_detection_task(
+    ti: Any = None,
+    threshold: Optional[float] = None,
+    min_observations: Optional[int] = None,
+) -> dict[str, Any]:
+    """Tarea Airflow para ejecutar la detección Z-score y persistir alertas y auditoría."""
+    from src.ai.anomalies import run_anomaly_detection
+
+    airflow_run_id = None
+    if ti is not None:
+        try:
+            airflow_run_id = ti.dag_run.run_id
+        except Exception:
+            pass
+
+    return run_anomaly_detection(
+        threshold=threshold,
+        min_observations=min_observations,
+        airflow_run_id=airflow_run_id,
+    )
+
+
+# ==============================================================================
+# 10. Resumen Ejecutivo Diario (Automatización A)
+# ==============================================================================
+def prepare_daily_summary_metrics_task(ti: Any = None) -> dict[str, Any]:
+    """Tarea 1 del DAG diario: precalcula métricas analíticas desde Gold."""
+    from src.ai.reporter import calculate_daily_summary_metrics
+
+    with get_db_connection(role="ai_reader") as conn:
+        with conn.cursor() as cur:
+            metrics = calculate_daily_summary_metrics(cur)
+
+    return metrics
+
+
+def generate_and_persist_daily_report_task(ti: Any = None) -> dict[str, Any]:
+    """Tarea 2 del DAG diario: genera narrativa (Ollama o fallback) y persiste auditoría."""
+    from src.ai.reporter import run_daily_executive_report
+
+    airflow_run_id = None
+    if ti is not None:
+        try:
+            airflow_run_id = ti.dag_run.run_id
+        except Exception:
+            pass
+
+    return run_daily_executive_report(airflow_run_id=airflow_run_id)
