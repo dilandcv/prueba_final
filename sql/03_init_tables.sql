@@ -236,3 +236,34 @@ CREATE TABLE IF NOT EXISTS ops.anomaly_alerts (
 COMMENT ON TABLE ops.anomaly_alerts IS 'Alertas de actividad sísmica inusual basadas en Z-Score estadístico y explicadas por IA.';
 CREATE INDEX IF NOT EXISTS idx_ops_anomaly_detected_at ON ops.anomaly_alerts (detected_at);
 CREATE INDEX IF NOT EXISTS idx_ops_anomaly_region ON ops.anomaly_alerts (region);
+
+-- Documentación técnica indexada para recuperación RAG
+CREATE TABLE IF NOT EXISTS ops.project_documents (
+    id SERIAL PRIMARY KEY,
+    doc_name VARCHAR(100) NOT NULL,
+    section_title VARCHAR(200) NOT NULL,
+    file_path VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('spanish', doc_name || ' ' || section_title || ' ' || content)) STORED
+);
+
+COMMENT ON TABLE ops.project_documents IS 'Documentación técnica del proyecto fragmentada para búsqueda RAG con FTS.';
+CREATE INDEX IF NOT EXISTS idx_ops_doc_tsv ON ops.project_documents USING GIN (tsv);
+
+-- Trazabilidad detallada del agente conversacional
+CREATE TABLE IF NOT EXISTS ops.ai_agent_traces (
+    id BIGSERIAL PRIMARY KEY,
+    executed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    question TEXT NOT NULL,
+    intent VARCHAR(50) NOT NULL,
+    tools_used JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+    latency_ms INT NOT NULL DEFAULT 0,
+    used_fallback BOOLEAN NOT NULL DEFAULT FALSE,
+    rejection_reason TEXT
+);
+
+COMMENT ON TABLE ops.ai_agent_traces IS 'Trazabilidad y observabilidad de consultas, intenciones y herramientas ejecutadas por el agente.';
+CREATE INDEX IF NOT EXISTS idx_ops_traces_executed_at ON ops.ai_agent_traces (executed_at);
+CREATE INDEX IF NOT EXISTS idx_ops_traces_intent ON ops.ai_agent_traces (intent);
+

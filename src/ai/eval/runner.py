@@ -231,17 +231,19 @@ def evaluate_agent(
 
 
 if __name__ == "__main__":
-    # Ejecución de prueba rápida sobre el agente actual como línea base
-    from src.ai.chat_service import process_chat_message
+    # Ejecución del benchmarking sobre el agente conversacional inteligente
+    from src.ai.chat_service import ChatMessageItem, process_chat_message
 
-    def legacy_adapter(msg: str, hist: Optional[list[dict[str, str]]] = None) -> dict[str, Any]:
-        resp = process_chat_message(msg)
+    def current_agent_adapter(msg: str, hist: Optional[list[dict[str, str]]] = None) -> dict[str, Any]:
+        history_items = [ChatMessageItem(role=h["role"], content=h["content"]) for h in hist] if hist else None
+        resp = process_chat_message(msg, history=history_items)
         return {
             "response": resp.response,
-            "intent": "CONSULTA_SISMICA",  # El agente antiguo asume todo como sismos
-            "tools_used": ["calculate_daily_summary_metrics"],  # Siempre ejecuta 24h
-            "latency_ms": 50,
+            "intent": resp.intent,
+            "tools_used": resp.tools_used or [],
+            "latency_ms": resp.latency_ms or 0,
         }
 
-    report = evaluate_agent(legacy_adapter)
+    report = evaluate_agent(current_agent_adapter)
     print(report.print_summary())
+

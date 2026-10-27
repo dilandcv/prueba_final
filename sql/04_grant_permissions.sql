@@ -43,6 +43,8 @@ GRANT SELECT ON ops.anomaly_alerts TO api_reader;
 GRANT SELECT ON ops.data_availability TO api_reader;
 GRANT SELECT ON ops.pipeline_executions TO api_reader;
 GRANT SELECT ON ops.ai_executions TO api_reader;
+GRANT SELECT ON ops.project_documents TO api_reader;
+GRANT SELECT ON ops.ai_agent_traces TO api_reader;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold
 GRANT SELECT ON TABLES TO api_reader;
@@ -50,17 +52,20 @@ GRANT SELECT ON TABLES TO api_reader;
 
 -- ------------------------------------------------------------------------------
 -- 3. Permisos para ROL ai_reader (Componente invocador de IA)
--- Solo lectura sobre tablas analíticas agregadas de Gold y alertas de Ops.
+-- Solo lectura sobre tablas analíticas agregadas de Gold, calidad y alertas de Ops.
 -- ------------------------------------------------------------------------------
-REVOKE ALL ON SCHEMA bronze, silver, metrics FROM ai_reader;
+REVOKE ALL ON SCHEMA bronze, silver FROM ai_reader;
 
-GRANT USAGE ON SCHEMA gold, ops TO ai_reader;
+GRANT USAGE ON SCHEMA gold, metrics, ops TO ai_reader;
 
 GRANT SELECT ON gold.earthquakes TO ai_reader;
 GRANT SELECT ON gold.hourly_regional_stats TO ai_reader;
 GRANT SELECT ON gold.regional_ranking TO ai_reader;
 GRANT SELECT ON gold.magnitude_distribution TO ai_reader;
+GRANT SELECT ON metrics.data_quality TO ai_reader;
 GRANT SELECT ON ops.anomaly_alerts TO ai_reader;
+GRANT SELECT ON ops.project_documents TO ai_reader;
+GRANT SELECT ON ops.ai_agent_traces TO ai_reader;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold
 GRANT SELECT ON TABLES TO ai_reader;

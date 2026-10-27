@@ -140,4 +140,7 @@ class ChatResponse(BaseModel):
     model_name: str = Field(..., description="Nombre del modelo de inferencia o fallback")
     used_fallback: bool = Field(False, description="Indica si se recurrió al motor determinista")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Fecha y hora UTC de la respuesta")
+    intent: Optional[str] = Field(None, description="Intención detectada")
+    tools_used: Optional[list[str]] = Field(default_factory=list, description="Herramientas ejecutadas")
+    latency_ms: Optional[int] = Field(None, description="Latencia total en milisegundos")
 
